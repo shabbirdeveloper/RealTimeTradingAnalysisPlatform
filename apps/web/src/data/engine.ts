@@ -120,7 +120,8 @@ function expiryCandidateFor(asset: AssetSymbol, now: Date, expiry: ExpiryMinutes
   const bucket = timeBucket(now, 5);
   const rand = seededRandom(asset, bucket, "expiry", expiry);
 
-  const alignedCount = timeframes.filter((t) => t.bias === direction || (direction === "NO_TRADE")).length;
+  const directionBias = proposedDirectionBias(direction);
+  const alignedCount = timeframes.filter((t) => t.bias === directionBias || direction === "NO_TRADE").length;
   const avgStrength = timeframes.reduce((s, t) => s + t.strength, 0) / timeframes.length;
 
   let technicalScore = Math.round(

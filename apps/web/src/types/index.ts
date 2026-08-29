@@ -74,7 +74,7 @@ export interface SignalReasonSet {
 export interface ExpiryCandidate {
   expiryMinutes: ExpiryMinutes;
   direction: Direction;
-  technicalScore: number | null; // 0-100
+  technicalScore: number; // 0-100, always computed (technical scoring never depends on ML readiness)
   modelConfidence: number | null; // 0-100, null if MODEL_NOT_READY
   modelStatus: "READY" | "MODEL_NOT_READY";
   metaDecision: "TAKE" | "REJECT" | null;
