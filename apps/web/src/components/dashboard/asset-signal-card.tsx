@@ -2,12 +2,23 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DirectionBadge, GradeBadge, RegimeBadge } from "@/components/shared/badges";
+import { AnimatedNumber } from "@/components/shared/animated-number";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { Signal } from "@/types";
 import { formatPrice, formatPercent, cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 
-export function AssetSignalCard({ signal, price, change24hPct }: { signal: Signal; price: number; change24hPct: number }) {
+export function AssetSignalCard({
+  signal,
+  price,
+  change24hPct,
+  index = 0,
+}: {
+  signal: Signal;
+  price: number;
+  change24hPct: number;
+  index?: number;
+}) {
   const cfg = ASSET_CONFIGS[signal.asset];
   const isNoTrade = signal.direction === "NO_TRADE";
   const isAplusplus = signal.grade === "A++";
@@ -16,7 +27,7 @@ export function AssetSignalCard({ signal, price, change24hPct }: { signal: Signa
     signal.direction === "CALL" ? "bg-call" : signal.direction === "PUT" ? "bg-put" : "bg-notrade/70";
 
   return (
-    <Link href={`/dashboard/markets/${signal.asset.toLowerCase()}`} className="block">
+    <Link href={`/dashboard/markets/${signal.asset.toLowerCase()}`} className="block animate-in fade-in-0 slide-in-from-bottom-4 duration-500 ease-out" style={{ animationDelay: `${index * 90}ms` }}>
       <Card
         className={cn(
           "card-premium-hover h-full overflow-hidden",
@@ -64,7 +75,11 @@ export function AssetSignalCard({ signal, price, change24hPct }: { signal: Signa
                 <div>
                   <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Confidence</p>
                   <p className="font-mono-tabular text-lg font-semibold text-foreground">
-                    {signal.confidence !== null ? formatPercent(signal.confidence) : "Not available"}
+                    {signal.confidence !== null ? (
+                      <AnimatedNumber value={signal.confidence} suffix="%" />
+                    ) : (
+                      "Not available"
+                    )}
                   </p>
                 </div>
                 <div className="text-right">

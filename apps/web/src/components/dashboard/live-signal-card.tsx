@@ -2,12 +2,13 @@
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { DirectionBadge, GradeBadge, RegimeBadge } from "@/components/shared/badges";
+import { AnimatedNumber } from "@/components/shared/animated-number";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { Signal } from "@/types";
-import { cn, formatCountdown, formatDateTimeUTC, formatPercent, formatPrice } from "@/lib/utils";
+import { cn, formatCountdown, formatDateTimeUTC, formatPrice } from "@/lib/utils";
 import { Clock, Sparkles } from "lucide-react";
 
-export function LiveSignalCard({ signal, now }: { signal: Signal; now: Date }) {
+export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now: Date; index?: number }) {
   const cfg = ASSET_CONFIGS[signal.asset];
   const isNoTrade = signal.direction === "NO_TRADE";
   const msRemaining = signal.validUntil ? new Date(signal.validUntil).getTime() - now.getTime() : 0;
@@ -17,9 +18,10 @@ export function LiveSignalCard({ signal, now }: { signal: Signal; now: Date }) {
   return (
     <Card
       className={cn(
-        "card-premium-hover overflow-hidden",
+        "card-premium-hover overflow-hidden animate-in fade-in-0 slide-in-from-bottom-4 duration-500 ease-out",
         isAplusplus && "aplusplus-frame border-aplusplus/30"
       )}
+      style={{ animationDelay: `${index * 90}ms` }}
     >
       <div className={cn("h-[3px] w-full", accent)} />
       {isAplusplus && (
@@ -48,7 +50,7 @@ export function LiveSignalCard({ signal, now }: { signal: Signal; now: Date }) {
         ) : (
           <>
             <div className="grid grid-cols-2 gap-4 rounded-lg border border-border/70 bg-secondary/20 p-3.5 sm:grid-cols-4">
-              <Metric label="Confidence" value={signal.confidence !== null ? formatPercent(signal.confidence) : "N/A"} />
+              <Metric label="Confidence" value={signal.confidence !== null ? <AnimatedNumber value={signal.confidence} suffix="%" /> : "N/A"} />
               <Metric label="Expiry" value={`${signal.expiryMinutes} min`} />
               <Metric label="Entry" value={signal.entryPrice ? formatPrice(signal.entryPrice, cfg.pipDecimal) : "—"} />
               <Metric

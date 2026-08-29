@@ -30,11 +30,16 @@ export function Sidebar() {
               <Link
                 href={item.href}
                 className={cn(
-                  "group relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "group relative flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200",
                   active ? "bg-secondary/80 text-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
                 )}
               >
-                {active && <span className="absolute -left-3 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />}
+                <span
+                  className={cn(
+                    "absolute -left-3 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary transition-all duration-200 ease-out",
+                    active ? "scale-y-100 opacity-100" : "scale-y-0 opacity-0"
+                  )}
+                />
                 <Icon className={cn("h-4 w-4 shrink-0 transition-colors", active ? "text-primary" : "text-muted-foreground/80 group-hover:text-foreground")} />
                 {item.label}
               </Link>

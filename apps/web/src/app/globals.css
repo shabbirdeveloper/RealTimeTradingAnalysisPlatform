@@ -147,4 +147,79 @@
     height: 1px;
     background: linear-gradient(90deg, transparent, hsl(var(--border)) 20%, hsl(var(--border)) 80%, transparent);
   }
+
+  /* Slow ambient breathing glow for A++ surfaces — subtle, institutional, never flashy. */
+  .aplusplus-frame {
+    animation: glow-pulse-gold 4s ease-in-out infinite;
+  }
+
+  /* Sweeping shimmer for loading skeletons, replacing a flat opacity pulse. */
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+    background: hsl(var(--secondary) / 0.55);
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.07), transparent);
+    animation: shimmer-sweep 1.8s ease-in-out infinite;
+  }
+
+  /* Reusable pulsing "live" dot with an expanding ring, for market/data status. */
+  .live-dot-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: currentColor;
+    opacity: 0.6;
+    animation: ping-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  .hero-float {
+    animation: float-subtle 7s ease-in-out infinite;
+  }
+}
+
+@keyframes glow-pulse-gold {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px hsl(var(--aplusplus) / 0.35),
+      0 16px 40px -20px hsl(var(--aplusplus) / 0.25);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px hsl(var(--aplusplus) / 0.55),
+      0 20px 48px -16px hsl(var(--aplusplus) / 0.4);
+  }
+}
+
+@keyframes shimmer-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes ping-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  75%, 100% { transform: scale(2.1); opacity: 0; }
+}
+
+@keyframes float-subtle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aplusplus-frame,
+  .skeleton-shimmer::after,
+  .live-dot-ring,
+  .hero-float,
+  .animate-in {
+    animation: none !important;
+  }
+  .card-premium-hover {
+    transition: none !important;
+  }
 }

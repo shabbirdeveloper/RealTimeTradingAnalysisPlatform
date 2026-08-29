@@ -20,7 +20,9 @@ export default function LiveSignalsPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
         {now
-          ? ASSET_LIST.map((asset) => <LiveSignalCard key={asset} signal={generateSignal(asset, now)} now={now} />)
+          ? ASSET_LIST.map((asset, i) => (
+              <LiveSignalCard key={asset} signal={generateSignal(asset, now)} now={now} index={i} />
+            ))
           : ASSET_LIST.map((asset) => <Skeleton key={asset} className="h-72" />)}
       </div>
     </div>

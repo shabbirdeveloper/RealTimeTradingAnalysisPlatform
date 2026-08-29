@@ -1,7 +1,8 @@
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import type { DataStatus, Direction, MarketRegime, SignalGrade } from "@/types";
-import { ArrowUpRight, ArrowDownRight, MinusCircle, Radio, Clock, AlertTriangle, WifiOff, Sparkles } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, MinusCircle, Clock, AlertTriangle, WifiOff, Sparkles } from "lucide-react";
+import { LiveDot } from "@/components/shared/live-dot";
 
 export function DirectionBadge({ direction, className }: { direction: Direction; className?: string }) {
   if (direction === "CALL") {
@@ -34,7 +35,7 @@ export function GradeBadge({ grade, className }: { grade: SignalGrade; className
           className
         )}
       >
-        <Sparkles className="h-3 w-3" /> A++
+        <Sparkles className="h-3 w-3 animate-pulse-slow" /> A++
       </span>
     );
   }
@@ -66,7 +67,7 @@ export function RegimeBadge({ regime, className }: { regime: MarketRegime; class
 
 export function DataStatusPill({ status, className }: { status: DataStatus; className?: string }) {
   const map: Record<DataStatus, { label: string; cls: string; icon: React.ReactNode }> = {
-    LIVE: { label: "LIVE", cls: "text-call border-call/30 bg-call-muted", icon: <Radio className="h-3 w-3 animate-pulse-slow" /> },
+    LIVE: { label: "LIVE", cls: "text-call border-call/30 bg-call-muted", icon: <LiveDot /> },
     DELAYED: { label: "DELAYED", cls: "text-notrade border-notrade/30 bg-notrade-muted", icon: <Clock className="h-3 w-3" /> },
     STALE: { label: "STALE", cls: "text-put border-put/30 bg-put-muted", icon: <AlertTriangle className="h-3 w-3" /> },
     OFFLINE: { label: "OFFLINE", cls: "text-muted-foreground border-border", icon: <WifiOff className="h-3 w-3" /> },

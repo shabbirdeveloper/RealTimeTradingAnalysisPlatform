@@ -3,6 +3,7 @@
 // any of these routes ship — see project spec sections 28 and 38. Nothing
 // here should be treated as an access control mechanism yet.
 import { AdminSidebar } from "@/components/layout/admin-sidebar";
+import { PageTransition } from "@/components/layout/page-transition";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -13,7 +14,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <p className="text-sm font-medium text-foreground">Admin Console</p>
           <span className="ml-3 text-xs text-muted-foreground">Role-gated in production — demo data only</span>
         </header>
-        <main className="flex-1 px-6 py-6">{children}</main>
+        <main className="flex-1 px-6 py-6"><PageTransition>{children}</PageTransition></main>
       </div>
     </div>
   );

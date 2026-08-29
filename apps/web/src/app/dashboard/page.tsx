@@ -7,7 +7,7 @@ import { DemoDataBanner } from "@/components/shared/badges";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent } from "@/components/ui/card";
 import { PERFORMANCE_SUMMARY } from "@/data/history";
-import { formatPercent } from "@/lib/utils";
+import { AnimatedNumber } from "@/components/shared/animated-number";
 import { Award, TrendingUp, Target } from "lucide-react";
 
 export default function DashboardHomePage() {
@@ -23,17 +23,44 @@ export default function DashboardHomePage() {
       <DemoDataBanner />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatTile icon={Target} label="Overall accuracy" value={formatPercent(PERFORMANCE_SUMMARY.overallAccuracy)} sub={`${PERFORMANCE_SUMMARY.totalSignals} resolved signals`} />
-        <StatTile icon={Award} label="A++ accuracy" value={formatPercent(PERFORMANCE_SUMMARY.aPlusPlusAccuracy)} sub={`${PERFORMANCE_SUMMARY.aPlusPlusSignals} A++ signals`} accent />
-        <StatTile icon={TrendingUp} label="Current streak" value={`${PERFORMANCE_SUMMARY.currentStreak.count} ${PERFORMANCE_SUMMARY.currentStreak.type}`} sub={`Max win streak ${PERFORMANCE_SUMMARY.maxWinStreak}`} />
+        <StatTile
+          index={0}
+          icon={Target}
+          label="Overall accuracy"
+          value={<AnimatedNumber value={PERFORMANCE_SUMMARY.overallAccuracy} suffix="%" />}
+          sub={`${PERFORMANCE_SUMMARY.totalSignals} resolved signals`}
+        />
+        <StatTile
+          index={1}
+          icon={Award}
+          label="A++ accuracy"
+          value={<AnimatedNumber value={PERFORMANCE_SUMMARY.aPlusPlusAccuracy} suffix="%" />}
+          sub={`${PERFORMANCE_SUMMARY.aPlusPlusSignals} A++ signals`}
+          accent
+        />
+        <StatTile
+          index={2}
+          icon={TrendingUp}
+          label="Current streak"
+          value={`${PERFORMANCE_SUMMARY.currentStreak.count} ${PERFORMANCE_SUMMARY.currentStreak.type}`}
+          sub={`Max win streak ${PERFORMANCE_SUMMARY.maxWinStreak}`}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {now
-          ? ASSET_LIST.map((asset) => {
+          ? ASSET_LIST.map((asset, i) => {
               const signal = generateSignal(asset, now);
               const snapshot = generateMarketSnapshot(asset, now);
-              return <AssetSignalCard key={asset} signal={signal} price={snapshot.price} change24hPct={snapshot.change24hPct} />;
+              return (
+                <AssetSignalCard
+                  key={asset}
+                  signal={signal}
+                  price={snapshot.price}
+                  change24hPct={snapshot.change24hPct}
+                  index={i}
+                />
+              );
             })
           : ASSET_LIST.map((asset) => <Skeleton key={asset} className="h-52" />)}
       </div>
@@ -41,9 +68,26 @@ export default function DashboardHomePage() {
   );
 }
 
-function StatTile({ icon: Icon, label, value, sub, accent }: { icon: typeof Target; label: string; value: string; sub: string; accent?: boolean }) {
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  accent,
+  index = 0,
+}: {
+  icon: typeof Target;
+  label: string;
+  value: React.ReactNode;
+  sub: string;
+  accent?: boolean;
+  index?: number;
+}) {
   return (
-    <Card className="card-premium-hover">
+    <Card
+      className="card-premium-hover animate-in fade-in-0 slide-in-from-bottom-3 duration-500 ease-out"
+      style={{ animationDelay: `${index * 90}ms` }}
+    >
       <CardContent className="flex items-center gap-3.5 p-4">
         <span
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${
