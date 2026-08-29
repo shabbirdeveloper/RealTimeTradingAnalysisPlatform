@@ -4,7 +4,7 @@ Tracking against the 10 phases defined in the project spec.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Project architecture, database, auth, dashboard, responsive nav, assets, mock UI | Frontend shell done. Database schema applied to a real Supabase project (confirmed — see below). Auth is wired for real and confirmed live: login/register/forgot-password/reset-password call actual `supabase.auth` methods, `apps/web/src/app/auth/callback/route.ts` handles email-link redirects, `middleware.ts` enforces server-side redirect protection on `/dashboard` and `/admin`. |
+| 1 | Project architecture, database, auth, dashboard, responsive nav, assets, mock UI | Frontend shell done. Database schema applied to a real Supabase project (confirmed — see below). Auth is wired for real and confirmed live: login/register/forgot-password/reset-password call actual `supabase.auth` methods, `apps/web/src/app/auth/callback/route.ts` handles email-link redirects, `middleware.ts` enforces server-side redirect protection on `/dashboard` and `/admin`. `/dashboard` (home) now reads real prices from Supabase — see "Dashboard home now reads real prices" below; every other dashboard/admin page (signals, markets, analyzer, history, performance, etc.) still runs on the frontend demo engine, honestly, since Phase 3/4 don't exist yet. |
 | 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | **Confirmed working end-to-end** — `apps/api/` (Python/FastAPI) fetches real M5 candles from Twelve Data, derives M15/H1/H4 in-process, writes both into `candles`, and reports per-asset status into `system_health`. Verified live: real rows visible in Supabase's `candles` and `system_health` tables (not just "should work"). Feature calculation (spec section 6) not started — that's Phase 3. See "Market data collector service" below. |
 | 3 | Technical analysis, structure analysis, regime engine, multi-timeframe engine | Simulated in the frontend demo engine only (`apps/web/src/data/engine.ts`) — not a real implementation |
 | 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | Simulated in the frontend demo engine only |
@@ -98,15 +98,57 @@ verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
 
+## Dashboard home now reads real prices (`apps/web/src/app/dashboard/page.tsx`)
+
+`/dashboard` was still showing the old synthetic "DEMO DATA" banner and
+fake prices/regimes even after the Phase 2 collector went live, because
+nothing in `apps/web` had been pointed at the new `candles` table yet.
+Fixed this session, scoped deliberately narrow (real price only, honest
+about everything else):
+
+- `apps/web/src/lib/market-data.ts` (new) — `getAssetPriceSnapshots()`,
+  a server-side function that reads the latest and oldest `M5` candle per
+  asset directly from Supabase (anon key, RLS-gated, read-only) and
+  derives `price`, a 24h `change24hPct`, and a `dataStatus`
+  (`LIVE`/`DELAYED`/`STALE`/`OFFLINE`) classified purely by candle age
+  per spec section 42. Never throws — any failure (no rows yet, network
+  error, etc.) returns `null` for that asset so the page can render an
+  honest empty state instead of a fake price.
+- `apps/web/src/components/dashboard/asset-signal-card.tsx` — gained two
+  optional, backward-compatible props: `regimeAvailable` (renders a plain
+  "Not analyzed" badge instead of a fake `RegimeBadge` when the regime
+  engine hasn't run) and `dataStatus` (renders the `DataStatusPill`).
+  Nothing else that renders this component was found (checked — only
+  `dashboard/page.tsx` uses it), so no other page needed changes.
+- `apps/web/src/app/dashboard/page.tsx` — rewritten from a client
+  component driving fake `generateSignal`/`generateMarketSnapshot` demo
+  data into an async Server Component that calls
+  `getAssetPriceSnapshots()`. Each asset card now shows the real Supabase
+  price and a `NO_TRADE` signal whose `warnings` field says plainly that
+  signal analysis isn't available yet (Phase 3/4 not built) — never a
+  fabricated CALL/PUT or regime. A new `NoDataCard` fallback renders for
+  any asset with no candle rows yet instead of a fake price.
+
+Verified via `npx tsc --noEmit` (only the 3 pre-existing, expected
+`@supabase/ssr not installed locally` errors — nothing new) and
+`npx next lint` (clean).
+
+Deliberately out of scope this pass: `/dashboard/signals`,
+`/dashboard/markets/*`, `/dashboard/analyzer`, `/dashboard/history`,
+`/dashboard/performance`, and all `/admin/*` pages still run on the
+frontend demo engine (`data/engine.ts`) and still say so — they weren't
+touched, since real signal/regime/backtest data depends on Phase 3-5
+work that hasn't happened yet. Wiring those to real data before the
+signal engine exists would mean inventing fake analysis, which is the
+one thing this project explicitly must not do.
+
 ## Next recommended step
 
 1. Once the market reopens, re-check the XAU/USD identical-open question
-   above — this is the one loose end from this session.
-2. Swap the frontend's demo data calls for real queries one page at a
-   time — starting with `/dashboard` and `/dashboard/signals`, since
-   those are the pages every other view links back to. Reading `candles`
-   + `system_health` directly (client-side via the anon key + RLS, which
-   is read-only there, or server components) is the natural first step.
+   above — this is the one loose end from Phase 2.
+2. `/dashboard` (home) now reads real prices — see above. Extend the same
+   pattern to `/dashboard/signals` next, since it's the page every signal
+   card links to.
 3. Consider adding Supabase Realtime subscriptions on `candles` for the
    live-updating parts of the dashboard, per the "no custom WebSocket
    server" decision above.
@@ -116,3 +158,7 @@ for no additional verification value at this point.
 5. Let the normal scheduler (not manual polling) run during real trading
    hours to build up genuine candle history for later phases (feature
    engine, backtesting) to work with.
+6. The real signal engine (Phase 3-4) is the actual blocker for wiring up
+   every other dashboard/admin page honestly — until it exists, those
+   pages should keep saying "demo" rather than being half-wired to real
+   prices with fake analysis bolted on.

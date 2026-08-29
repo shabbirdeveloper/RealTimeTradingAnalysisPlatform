@@ -1,10 +1,11 @@
 "use client";
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { DirectionBadge, GradeBadge, RegimeBadge } from "@/components/shared/badges";
+import { DirectionBadge, GradeBadge, RegimeBadge, DataStatusPill } from "@/components/shared/badges";
+import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { ASSET_CONFIGS } from "@/data/assets";
-import type { Signal } from "@/types";
+import type { DataStatus, Signal } from "@/types";
 import { formatPrice, formatPercent, cn } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 
@@ -13,11 +14,20 @@ export function AssetSignalCard({
   price,
   change24hPct,
   index = 0,
+  regimeAvailable = true,
+  dataStatus,
 }: {
   signal: Signal;
   price: number;
   change24hPct: number;
   index?: number;
+  /** False when no real regime classification exists yet (Phase 3 not
+   * built) -- shows a neutral "Not analyzed" badge instead of a
+   * MarketRegime value that would otherwise have to be fabricated. */
+  regimeAvailable?: boolean;
+  /** Freshness of the underlying price data, per spec section 42. Only
+   * rendered when provided -- demo-data callers can omit it. */
+  dataStatus?: DataStatus;
 }) {
   const cfg = ASSET_CONFIGS[signal.asset];
   const isNoTrade = signal.direction === "NO_TRADE";
@@ -40,7 +50,14 @@ export function AssetSignalCard({
             <p className="text-sm font-semibold text-foreground">{cfg.displayName}</p>
             <p className="text-xs text-muted-foreground">{cfg.shortName}</p>
           </div>
-          <RegimeBadge regime={signal.marketRegime} />
+          <div className="flex flex-col items-end gap-1.5">
+            {regimeAvailable ? (
+              <RegimeBadge regime={signal.marketRegime} />
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground">Not analyzed</Badge>
+            )}
+            {dataStatus && <DataStatusPill status={dataStatus} />}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-baseline justify-between">
