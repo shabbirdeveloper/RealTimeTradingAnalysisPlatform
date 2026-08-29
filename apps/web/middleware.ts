@@ -3,14 +3,13 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 /**
  * Refreshes the Supabase auth session on every request that isn't a static
- * asset. This does NOT enforce route protection by itself — /dashboard and
- * /admin still need their own server-side checks (spec section 38: "server-
- * side role checks", not just a middleware redirect) — it only keeps the
- * session cookie valid so those checks have a real session to look at.
+ * asset, and enforces the actual route protection for /dashboard and
+ * /admin (spec section 38: "server-side role checks", not just a client
+ * redirect).
  *
- * No-ops safely (passes the request through untouched) if Supabase env vars
- * aren't set yet, so the rest of the app keeps working against demo data
- * before a Supabase project is connected.
+ * No-ops safely (passes the request through untouched, protection included)
+ * if Supabase env vars aren't set yet, so the rest of the app keeps working
+ * against demo data before a Supabase project is connected.
  */
 export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -37,7 +36,38 @@ export async function middleware(request: NextRequest) {
 
   // Touches the session so an expired access token gets refreshed via the
   // refresh token before any Server Component tries to read it.
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const { pathname } = request.nextUrl;
+  const isDashboard = pathname.startsWith("/dashboard");
+  const isAdmin = pathname.startsWith("/admin");
+
+  if ((isDashboard || isAdmin) && !user) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirectedFrom", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  if (isAdmin && user) {
+    // Fails closed: if the profiles table isn't reachable yet (e.g. the
+    // migrations haven't been run against this project), nobody gets
+    // treated as an admin rather than everybody.
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profile?.role !== "admin") {
+        return NextResponse.redirect(new URL("/dashboard", request.url));
+      }
+    } catch {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+  }
 
   return response;
 }
