@@ -1,13 +1,10 @@
-"use client";
-import { useNow } from "@/lib/use-now";
-import { ASSET_LIST } from "@/data/assets";
-import { generateSignal } from "@/data/engine";
-import { LiveSignalCard } from "@/components/dashboard/live-signal-card";
-import { DemoDataBanner } from "@/components/shared/badges";
-import { Skeleton } from "@/components/ui/skeleton";
+import { getLatestSignals } from "@/lib/signals";
+import { LiveSignalsGrid } from "@/components/dashboard/live-signals-grid";
 
-export default function LiveSignalsPage() {
-  const now = useNow(1000);
+export const dynamic = "force-dynamic"; // always read the latest signal, never a stale build-time snapshot
+
+export default async function LiveSignalsPage() {
+  const signals = await getLatestSignals();
 
   return (
     <div className="space-y-6">
@@ -16,15 +13,7 @@ export default function LiveSignalsPage() {
         <p className="text-sm text-muted-foreground">Refreshes on a 5-minute analysis cycle. Quality over quantity — most cycles produce NO TRADE.</p>
       </div>
 
-      <DemoDataBanner />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        {now
-          ? ASSET_LIST.map((asset, i) => (
-              <LiveSignalCard key={asset} signal={generateSignal(asset, now)} now={now} index={i} />
-            ))
-          : ASSET_LIST.map((asset) => <Skeleton key={asset} className="h-72" />)}
-      </div>
+      <LiveSignalsGrid signals={signals} />
     </div>
   );
 }

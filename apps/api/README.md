@@ -73,20 +73,22 @@ Then check `http://127.0.0.1:8000/health`.
 
 ## Running the tests
 
-Only `app/aggregation.py` is unit-tested so far — it's the one piece with
-zero third-party dependencies, so it runs anywhere Python 3.10+ runs, no
-`pip install` required:
+`app/aggregation.py` and everything under `app/features/` (indicators,
+structure, regime, timeframe bias, the signal engine) are unit-tested —
+all zero-dependency, pure Python, so they run anywhere Python 3.10+
+runs, no `pip install` required:
 
 ```bash
 python -m unittest discover -s tests -t . -v
 ```
 
-(Already run and passing as of when this was written — 12/12 tests.)
-Everything else in this service (the provider, the storage layer, the
-scheduler) depends on `fastapi`/`httpx`/`supabase`/`apscheduler`, which
-were written but have **not** been executed anywhere yet — only checked
-for valid Python syntax. First real run happens when you `pip install -r
-requirements.txt` and start it yourself.
+(43/43 passing as of when this was written.) The storage layer, the
+provider, and the scheduler depend on `fastapi`/`httpx`/`supabase`/
+`apscheduler`, which are exercised by actually running the service (see
+"Verified this session" in `docs/PHASE-STATUS.md`) rather than by unit
+tests — the feature/signal engine writes were added after that last live
+verification and have **not yet been run against the real Supabase
+project**; that's the next thing to do after restarting this service.
 
 ## What's NOT done yet
 
@@ -98,8 +100,16 @@ requirements.txt` and start it yourself.
   is expected to go through **Supabase Realtime** (Postgres change feed
   on `candles`), not a custom WebSocket layer here — simpler, and the
   spec explicitly allows "Supabase Realtime where appropriate."
-- `market_hours.is_market_open()` is a blunt weekend check, not the real
-  session-detection engine (spec section 6/7) — that belongs to a later
-  phase's feature engine.
-- Feature calculation (spec section 6), regime detection, and everything
-  from Phase 3 onward are not part of this service yet.
+- `market_hours.is_market_open()` is a blunt weekend check — separate
+  from the real session detection now in `app/features/structure.py`
+  (`session_for_time`, Asian/London ranges), which is used for analysis,
+  not for deciding whether to poll at all.
+- Feature calculation, regime detection, multi-timeframe bias, and a
+  rule-based signal engine (Phases 3-4) are now real — see
+  `app/features/` and `docs/PHASE-STATUS.md`'s "Real signal engine"
+  section for exactly what's real and what's explicitly not (no
+  calibrated ML confidence, no meta model, no news filter, thin early
+  history).
+- No signal resolution job yet (spec section 49) — nothing marks a
+  signal WON/LOST/DRAW once its expiry passes, so real accuracy stats
+  aren't computable yet.

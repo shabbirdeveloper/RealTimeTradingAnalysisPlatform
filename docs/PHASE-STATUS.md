@@ -4,10 +4,10 @@ Tracking against the 10 phases defined in the project spec.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Project architecture, database, auth, dashboard, responsive nav, assets, mock UI | Frontend shell done. Database schema applied to a real Supabase project (confirmed — see below). Auth is wired for real and confirmed live: login/register/forgot-password/reset-password call actual `supabase.auth` methods, `apps/web/src/app/auth/callback/route.ts` handles email-link redirects, `middleware.ts` enforces server-side redirect protection on `/dashboard` and `/admin`. `/dashboard` (home) now reads real prices from Supabase — see "Dashboard home now reads real prices" below; every other dashboard/admin page (signals, markets, analyzer, history, performance, etc.) still runs on the frontend demo engine, honestly, since Phase 3/4 don't exist yet. |
-| 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | **Confirmed working end-to-end** — `apps/api/` (Python/FastAPI) fetches real M5 candles from Twelve Data, derives M15/H1/H4 in-process, writes both into `candles`, and reports per-asset status into `system_health`. Verified live: real rows visible in Supabase's `candles` and `system_health` tables (not just "should work"). Feature calculation (spec section 6) not started — that's Phase 3. See "Market data collector service" below. |
-| 3 | Technical analysis, structure analysis, regime engine, multi-timeframe engine | Simulated in the frontend demo engine only (`apps/web/src/data/engine.ts`) — not a real implementation |
-| 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | Simulated in the frontend demo engine only |
+| 1 | Project architecture, database, auth, dashboard, responsive nav, assets, mock UI | Frontend shell done. Database schema applied to a real Supabase project (confirmed — see below). Auth is wired for real and confirmed live. `/dashboard`, `/dashboard/signals`, and `/dashboard/markets/[asset]` now read real prices AND real signals from Supabase — see "Real signal engine" below. `/dashboard/history`, `/dashboard/performance`, `/dashboard/analyzer`, and all of `/admin/*` still run the frontend demo engine, honestly, pending Phase 5 (backtesting/resolution) and Phase 6 (ML). |
+| 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | **Confirmed working end-to-end** — `apps/api/` (Python/FastAPI) fetches real M5 candles from Twelve Data, derives M15/H1/H4 in-process, writes both into `candles`, and reports per-asset status into `system_health`. Feature calculation (spec section 6) is now real too — see Phase 3 below. |
+| 3 | Technical analysis, structure analysis, regime engine, multi-timeframe engine | **Real, rule-based implementation** in `apps/api/app/features/` — computed from real stored candles on every poll cycle. See "Real signal engine" below for exactly what is and isn't real yet. |
+| 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | **Real, rule-based decision engine** (`apps/api/app/features/signal_engine.py`) writing into the real `signals` table. Expiry scoring is real; the meta trade/no-trade model (spec section 12) and calibrated confidence are not — see below. Signal resolution (spec section 49 — marking WON/LOST/DRAW at expiry) is not built yet, so history/performance still can't be computed from real outcomes. |
 | 5 | Backtesting engine, result calculation, analytics | Demo-only backtest builder in the frontend (`buildDemoBacktest`) — not connected to any real historical data or execution logic |
 | 6 | ML pipeline, independent models, meta model, probability calibration | Not started. UI already distinguishes `MODEL_NOT_READY` from a calibrated confidence, per spec section 10 |
 | 7 | News filter, economic calendar | Frontend UI + static demo calendar data only; no real economic-calendar API integration |
@@ -98,6 +98,100 @@ verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
 
+## Real signal engine (Phases 3 + 4) — `apps/api/app/features/`
+
+Follow-up in the same session, in response to "I need all demo replaced
+with real data." This replaces the frontend's random demo engine
+(`data/engine.ts`) with a genuine, rule-based technical analysis +
+market structure + regime + multi-timeframe + signal engine, computed
+from real stored candles on every collector poll cycle, wired into
+`/dashboard`, `/dashboard/signals`, and `/dashboard/markets/[asset]`.
+
+**What's real now:**
+- `app/features/indicators.py` — EMA20/50/200 (+ slope), RSI14 (+ slope),
+  MACD(12,26,9) + histogram, ATR14 (+ percentile vs recent history),
+  Bollinger(20,2). Pure functions, no randomness, computed from real
+  candle history. Each returns `None` — not a partial or estimated value
+  — when there isn't yet enough real history to compute it honestly.
+  27 unit tests.
+- `app/features/structure.py` — real swing high/low detection (2-bar
+  fractal), HH/HL/LH/LL sequence classification, break of structure,
+  change of character, support/resistance, plus real session detection
+  and Asian/London high-low ranges computed from actual candle
+  timestamps. 10 unit tests.
+- `app/features/regime.py` — classifies TRENDING_UP/DOWN, RANGING,
+  HIGH_VOLATILITY, LOW_VOLATILITY, or UNSTABLE from real H1 ATR
+  percentile + EMA slope + structure. **NEWS_MODE is never returned** —
+  classifying it correctly needs the economic calendar (Phase 7), which
+  doesn't exist yet; returning it without real calendar data would be
+  exactly the fake-signal problem this project must avoid.
+- `app/features/timeframe_bias.py` — real BULLISH/BEARISH/NEUTRAL bias
+  per timeframe (H4/H1/M15/M5) from EMA structure + RSI + MACD + swing
+  structure, with an explicit `insufficient_data` flag rather than a
+  guess when a timeframe doesn't have enough history yet.
+- `app/features/signal_engine.py` — combines all of the above into a
+  real CALL/PUT/NO_TRADE decision with a genuinely-computed Technical
+  Score (0-100) and per-expiry (15/30/60m) candidates, weighted toward
+  fast timeframes for 15m and slow timeframes for 60m. 5 unit tests,
+  including one that asserts the engine can never return a grade above B
+  — see the honest limits below.
+- Writes into the real DB tables from the original schema: per-cycle
+  feature snapshots into `market_features` (`app/storage/feature_repository.py`)
+  and one `signals` row per asset per poll cycle
+  (`app/storage/signal_repository.py`). `apps/web/src/lib/signals.ts` and
+  `apps/web/src/lib/features.ts` read them back for the dashboard, live
+  signals page, and market detail page — replacing `generateSignal()` /
+  `generateTechnicalMetrics()` / `generateStructureNotes()` wherever real
+  data exists, falling back to the labeled demo engine (with an explicit
+  "no real signal/feature yet" note) wherever it doesn't yet.
+
+**Honest limits, deliberately not worked around:**
+- **No calibrated ML confidence.** Phase 6 (XGBoost/LightGBM/calibration)
+  isn't built — there's no trained model to produce one. `raw_probability`
+  and `calibrated_confidence` are always `null`, and grade is capped at
+  B (or REJECTED) — never A/A+/A++ — exactly matching spec section 10's
+  rule and the frontend's own pre-existing `gradeFromConfidence()` logic
+  for the `MODEL_NOT_READY` case. The signal engine states this in an
+  explicit warning on every decision rather than a footnote.
+- **No meta trade/no-trade model.** Spec section 12's separate TAKE/REJECT
+  model doesn't exist yet either — also stated as an explicit warning,
+  not silently skipped.
+- **No economic calendar / news filter.** Spec section 8 needs Phase 7's
+  calendar integration; every signal states this limitation explicitly
+  rather than silently ignoring news risk.
+- **Real history is currently thin.** The collector only started writing
+  real candles this session, and the market has been closed for most of
+  that time. EMA200 needs 200 real H4 candles (~33 days); until enough
+  real history accumulates, most assets/timeframes will honestly return
+  `insufficient_data` → NO_TRADE rather than analyze on too small a
+  sample. This is the system working as designed, not a bug — it will
+  naturally produce richer, real analysis as more real candles land over
+  the coming days/weeks with the market open.
+- **Indicator/regime weights (vote thresholds, the 78-point B cutoff,
+  per-expiry weighting) are a reasonable starting rule set, not a
+  backtested-optimal one.** Validating and tuning them against real
+  historical outcomes is explicitly the backtesting engine's job (spec
+  section 13) once enough real signal history exists — noted in code
+  comments in `timeframe_bias.py` and `signal_engine.py`.
+- **No signal resolution job yet** (spec section 49 — marking a signal
+  WON/LOST/DRAW once its expiry passes by checking the real closing
+  price). Without it, `/dashboard/history` and `/dashboard/performance`
+  can't be computed from real outcomes yet, so those two pages
+  deliberately stay on the demo engine — building the resolution job is
+  the natural next step once enough signals have expiry timestamps in
+  the past to resolve.
+
+Verified via `python3 -m unittest discover -s tests -t .` (43/43
+passing, up from 12) and, on the frontend, `npx tsc --noEmit` (only the
+3 pre-existing `@supabase/ssr` errors) and `npx next lint` (clean). Not
+yet verified end-to-end against a live poll cycle on the user's machine
+(the pattern used for Phase 2) — that requires restarting the `apps/api`
+process so it picks up this code, then either waiting for the next
+scheduled poll or calling `/debug/poll-now`, then checking Supabase's
+`market_features` and `signals` tables for new rows. **This is the
+user's next action**, alongside pushing this commit (see the push
+constraint above).
+
 ## Dashboard home now reads real prices (`apps/web/src/app/dashboard/page.tsx`)
 
 `/dashboard` was still showing the old synthetic "DEMO DATA" banner and
@@ -178,21 +272,35 @@ as above.
 
 ## Next recommended step
 
-1. Once the market reopens, re-check the XAU/USD identical-open question
-   above — this is the one loose end from Phase 2.
-2. `/dashboard` (home) now reads real prices — see above. Extend the same
-   pattern to `/dashboard/signals` next, since it's the page every signal
-   card links to.
-3. Consider adding Supabase Realtime subscriptions on `candles` for the
-   live-updating parts of the dashboard, per the "no custom WebSocket
+1. **Push the latest commits** (see the push constraint noted above —
+   this session can commit locally but can't push) and restart the
+   `apps/api` process on your machine so it picks up the new feature/
+   signal engine code.
+2. Trigger one poll cycle (`POST /debug/poll-now`, or wait for the
+   scheduler) and confirm real rows appear in Supabase's
+   `market_features` and `signals` tables — the same "verify it actually
+   ran, don't just trust that it compiles" pattern used for Phase 2.
+   Expect mostly `NO_TRADE` / `insufficient_data` results at first — real
+   history is still thin (see "Real history is currently thin" above).
+3. Once the market reopens, re-check the XAU/USD identical-open question
+   from Phase 2 alongside the new signal engine's first real reads.
+4. Let the scheduler run continuously during real trading hours so real
+   candle + feature history actually accumulates — every honest limit
+   above (insufficient_data, EMA200 warm-up) resolves itself with time
+   and real data, not more code.
+5. Build the signal resolution job (spec section 49): mark ACTIVE
+   signals WON/LOST/DRAW once `expiry_at` passes, using the real closing
+   price. This unlocks real `/dashboard/history` and
+   `/dashboard/performance` — currently the two biggest remaining demo
+   surfaces.
+6. Consider adding Supabase Realtime subscriptions on `candles`/`signals`
+   for live-updating dashboard pieces, per the "no custom WebSocket
    server" decision above.
-4. Regenerate real TypeScript types now that the schema is live:
+7. Regenerate real TypeScript types now that the schema is live:
    `npx supabase gen types typescript --project-id <ref> > apps/web/src/types/database.ts`
    (replacing the `any` placeholder currently there).
-5. Let the normal scheduler (not manual polling) run during real trading
-   hours to build up genuine candle history for later phases (feature
-   engine, backtesting) to work with.
-6. The real signal engine (Phase 3-4) is the actual blocker for wiring up
-   every other dashboard/admin page honestly — until it exists, those
-   pages should keep saying "demo" rather than being half-wired to real
-   prices with fake analysis bolted on.
+8. Phase 6 (ML) and Phase 7 (news/calendar) are the two remaining honest
+   gaps the signal engine explicitly warns about on every decision —
+   tackle news/calendar first (it's a data-integration problem); ML
+   needs real resolved-signal history from step 5 to train against
+   first, so it naturally comes after.

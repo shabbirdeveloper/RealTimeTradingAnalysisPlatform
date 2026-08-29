@@ -1,8 +1,10 @@
 """
 One poll cycle: fetch the latest M5 candles for an asset, store them,
-derive M15/H1/H4 from stored history, store those, and report health.
-Called by the scheduler on each tick; also callable directly (a one-off
-script, a manual trigger, a test) without needing APScheduler at all.
+derive M15/H1/H4 from stored history, store those, compute real technical
+features + a real signal decision from stored history, store both, and
+report health. Called by the scheduler on each tick; also callable
+directly (a one-off script, a manual trigger, a test) without needing
+APScheduler at all.
 """
 
 from __future__ import annotations
@@ -14,10 +16,14 @@ from datetime import datetime, timezone
 from app.aggregation import Candle as AggCandle
 from app.aggregation import Timeframe as AggTimeframe
 from app.aggregation import aggregate_candles
+from app.features.signal_engine import build_signal
+from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
 from app.schemas.candle import Asset, Candle, Timeframe
 from app.storage.candle_repository import fetch_recent_candles, upsert_candles
+from app.storage.feature_repository import upsert_features
 from app.storage.health_repository import report_component_health
+from app.storage.signal_repository import insert_signal
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +31,12 @@ logger = logging.getLogger(__name__)
 # bucket); fetched with extra headroom so a couple of closed H4 buckets
 # are always derivable, not just the newest one.
 _M5_LOOKBACK_FOR_H4 = 48 * 3
+
+# History fetched per timeframe for the feature/signal engine. 250 covers
+# a real EMA200 once that much real history exists; fewer real candles
+# just means the feature engine honestly reports "insufficient data"
+# until then -- see app/features/timeframe_bias.py.
+_FEATURE_LOOKBACK = 250
 
 
 def _to_agg_candle(c: Candle) -> AggCandle:
@@ -37,6 +49,16 @@ def _from_agg_candle(c: AggCandle) -> Candle:
     return Candle(
         open_time=c.open_time, open=c.open, high=c.high, low=c.low, close=c.close, volume=c.volume
     )
+
+
+def _to_feature_dict(c: Candle) -> dict:
+    return {
+        "open": float(c.open),
+        "high": float(c.high),
+        "low": float(c.low),
+        "close": float(c.close),
+        "open_time": c.open_time,
+    }
 
 
 async def run_poll_cycle(
@@ -89,3 +111,26 @@ async def run_poll_cycle(
             "latency_ms": latency_ms,
         },
     )
+
+    _run_analysis_cycle(asset)
+
+
+def _run_analysis_cycle(asset: Asset) -> None:
+    """Real technical analysis + signal decision from real stored candle
+    history (spec sections 6-12). Failures here are logged and swallowed
+    -- a feature/signal computation problem should never take down candle
+    collection, which is the more critical half of this poll cycle.
+    """
+    try:
+        candles_by_timeframe: dict[str, list[dict]] = {}
+        for tf in (Timeframe.H4, Timeframe.H1, Timeframe.M15, Timeframe.M5):
+            stored = fetch_recent_candles(asset, tf, _FEATURE_LOOKBACK)
+            feature_candles = [_to_feature_dict(c) for c in stored]
+            candles_by_timeframe[tf.value] = feature_candles
+            if feature_candles:
+                upsert_features(asset, tf, feature_candles[-1]["open_time"], compute_feature_dict(feature_candles))
+
+        decision = build_signal(asset.value, candles_by_timeframe, now=datetime.now(timezone.utc))
+        insert_signal(asset, decision)
+    except Exception:  # noqa: BLE001 -- deliberately broad, see docstring
+        logger.exception("analysis cycle failed for %s", asset.value)

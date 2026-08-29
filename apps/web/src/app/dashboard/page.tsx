@@ -5,20 +5,26 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PERFORMANCE_SUMMARY } from "@/data/history";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshots } from "@/lib/market-data";
+import { getLatestSignals } from "@/lib/signals";
 import type { AssetSymbol, Signal } from "@/types";
 import { Award, TrendingUp, Target, AlertTriangle } from "lucide-react";
 
+export const dynamic = "force-dynamic"; // always read the latest price + signal, never a stale build-time snapshot
+
 /**
- * Real prices, honestly-not-yet-real signals. The market-data collector
- * (apps/api) writes real candles into Supabase; this page reads them
- * directly. The signal engine, regime classifier, and performance stats
- * below (Phases 3-5) don't exist yet, so those stay clearly labeled
- * placeholders rather than being quietly mixed with real prices -- spec
- * section 50 is explicit that fake signals/results must never ship, in
- * any state, partial pages included.
+ * Real prices AND real signals. apps/api's collector writes real candles;
+ * its rule-based signal engine (app/features/signal_engine.py) writes
+ * real CALL/PUT/NO_TRADE decisions with a genuine technical score --
+ * never a fabricated ML confidence (Phase 6 doesn't exist yet, so
+ * `signal.confidence` stays null and grade is capped at B/REJECTED, per
+ * spec section 10). The accuracy/streak stat tiles below are still the
+ * demo performance engine -- meaningful accuracy stats need real
+ * resolved-signal history to accumulate first (spec section 49
+ * resolution job isn't built yet), so those stay clearly labeled rather
+ * than computed from a handful of untested signals.
  */
 export default async function DashboardHomePage() {
-  const snapshots = await getAssetPriceSnapshots();
+  const [snapshots, signals] = await Promise.all([getAssetPriceSnapshots(), getLatestSignals()]);
 
   return (
     <div className="space-y-6">
@@ -30,10 +36,11 @@ export default async function DashboardHomePage() {
       <div className="flex items-start gap-2.5 rounded-lg border border-notrade/20 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-notrade" />
         <span>
-          <strong className="font-semibold">Prices below are live</strong> from the market-data collector. Signal
-          direction, market regime, and the accuracy/streak figures further down are still{" "}
-          <strong className="font-semibold">synthetic placeholders</strong> — the signal engine and performance
-          tracking (Phases 3–5) haven&apos;t been built yet.
+          <strong className="font-semibold">Prices and signals below are real</strong> — computed from live candles
+          by the technical signal engine. There is no calibrated ML confidence yet (Phase 6), so grades are capped at
+          B until real models exist. The accuracy/streak figures further down are still{" "}
+          <strong className="font-semibold">synthetic placeholders</strong> — real performance tracking needs
+          resolved signal history to accumulate first.
         </span>
       </div>
 
@@ -67,7 +74,8 @@ export default async function DashboardHomePage() {
           const snapshot = snapshots[asset];
           if (!snapshot) return <NoDataCard key={asset} asset={asset} index={i} />;
 
-          const honestSignal: Signal = {
+          const realSignal = signals[asset];
+          const signal: Signal = realSignal ?? {
             id: `${asset}-no-analysis`,
             asset,
             direction: "NO_TRADE",
@@ -81,7 +89,7 @@ export default async function DashboardHomePage() {
             validUntil: null,
             reasons: [],
             warnings: [
-              "Signal analysis not available yet — the technical, regime, and ML engine (Phase 3–4) hasn't been built. Price shown is real.",
+              "No signal analysis yet for this asset — the engine hasn't completed its first cycle. Price shown is real.",
             ],
             status: "REJECTED",
             modelVersion: null,
@@ -92,11 +100,11 @@ export default async function DashboardHomePage() {
           return (
             <AssetSignalCard
               key={asset}
-              signal={honestSignal}
+              signal={signal}
               price={snapshot.price}
               change24hPct={snapshot.change24hPct}
               index={i}
-              regimeAvailable={false}
+              regimeAvailable={Boolean(realSignal)}
               dataStatus={snapshot.dataStatus}
             />
           );
