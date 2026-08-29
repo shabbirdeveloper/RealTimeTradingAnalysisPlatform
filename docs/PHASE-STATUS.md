@@ -134,13 +134,47 @@ Verified via `npx tsc --noEmit` (only the 3 pre-existing, expected
 `npx next lint` (clean).
 
 Deliberately out of scope this pass: `/dashboard/signals`,
-`/dashboard/markets/*`, `/dashboard/analyzer`, `/dashboard/history`,
-`/dashboard/performance`, and all `/admin/*` pages still run on the
-frontend demo engine (`data/engine.ts`) and still say so — they weren't
-touched, since real signal/regime/backtest data depends on Phase 3-5
-work that hasn't happened yet. Wiring those to real data before the
-signal engine exists would mean inventing fake analysis, which is the
-one thing this project explicitly must not do.
+`/dashboard/analyzer`, `/dashboard/history`, `/dashboard/performance`,
+and all `/admin/*` pages still run on the frontend demo engine
+(`data/engine.ts`) and still say so — they weren't touched, since real
+signal/regime/backtest data depends on Phase 3-5 work that hasn't
+happened yet. Wiring those to real data before the signal engine exists
+would mean inventing fake analysis, which is the one thing this project
+explicitly must not do.
+
+## Market detail pages also wired to real price (`/dashboard/markets/[asset]`)
+
+Follow-up in the same session: the per-asset market pages
+(`/dashboard/markets/xauusd` etc.) were still showing the old blanket
+"DEMO DATA" banner over a fully-synthetic price, since only the
+dashboard home page had been wired above. Same treatment, applied
+consistently:
+
+- `apps/web/src/lib/market-data.ts` — added `getAssetPriceSnapshot(asset)`
+  for a single-asset lookup (shares the fetch logic with
+  `getAssetPriceSnapshots()` via a new `fetchSnapshotForAssetId` helper),
+  so the per-asset page doesn't pull all three assets' candles just to
+  show one.
+- `apps/web/src/app/dashboard/markets/[asset]/page.tsx` — fetches the
+  real snapshot server-side, passes it to `MarketPageContent`.
+- `apps/web/src/components/dashboard/market-page-content.tsx` — Price,
+  24h change, and the `DataStatusPill` now use the real snapshot when
+  one exists; falls back to the demo-generated price only if no candles
+  exist yet for that asset. Session (a pure function of UTC time, not
+  fabricated) was already accurate even in demo mode. Everything else —
+  H4 bias badge, multi-timeframe bias grid, regime badge, technical
+  indicators, market structure notes, current signal, expiry-candidate
+  table, signal history table, performance stats — is still the demo
+  engine, unchanged. The banner was rewritten to say exactly which half
+  of the page is real (price/change) vs still a placeholder, instead of
+  a blanket "DEMO DATA" claim that would now be inaccurate for the price
+  row. When no real snapshot exists yet for an asset, the page falls
+  back to the original full `DemoDataBanner`.
+
+Verified via `npx tsc --noEmit` (same 3 pre-existing `@supabase/ssr`
+errors, nothing new) and `npx next lint` (clean). Committed locally
+(`513dd56`) — **push is the user's next action**, same push restriction
+as above.
 
 ## Next recommended step
 
