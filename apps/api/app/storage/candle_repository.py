@@ -102,3 +102,39 @@ def fetch_recent_candles(asset: Asset, timeframe: Timeframe, limit: int) -> list
     ]
     candles.reverse()  # rows came back newest-first
     return candles
+
+def fetch_first_candle_at_or_after(
+    asset: Asset, timeframe: Timeframe, at
+) -> tuple[Candle, str] | None:
+    """Real closing price lookup for signal resolution (spec section 49):
+    the earliest stored candle at/after `at`, plus the real provider
+    `source` string it was written with (spec: "store the exact quote
+    source used"). Returns None if no candle has been stored yet at/after
+    that time -- resolution should simply wait for the next poll cycle
+    rather than guess."""
+    asset_id = _asset_id_map()[asset]
+    client = get_service_client()
+    response = (
+        client.table("candles")
+        .select("open_time, open, high, low, close, volume, source")
+        .eq("asset_id", asset_id)
+        .eq("timeframe", timeframe.value)
+        .gte("open_time", at.astimezone(timezone.utc).isoformat())
+        .order("open_time", desc=False)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        return None
+    row = rows[0]
+    candle = Candle(
+        open_time=datetime.fromisoformat(row["open_time"]).astimezone(timezone.utc),
+        open=Decimal(str(row["open"])),
+        high=Decimal(str(row["high"])),
+        low=Decimal(str(row["low"])),
+        close=Decimal(str(row["close"])),
+        volume=Decimal(str(row["volume"])) if row["volume"] is not None else None,
+    )
+    return candle, row["source"]
+

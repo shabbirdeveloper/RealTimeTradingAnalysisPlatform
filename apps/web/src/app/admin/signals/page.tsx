@@ -1,22 +1,22 @@
-import { HISTORICAL_SIGNALS, REJECTED_OPPORTUNITIES } from "@/data/history";
+import { getAcceptedSignals, getRejectedOpportunities } from "@/lib/admin";
 import { ASSET_CONFIGS } from "@/data/assets";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DirectionBadge, GradeBadge, DemoDataBanner } from "@/components/shared/badges";
+import { DirectionBadge, GradeBadge } from "@/components/shared/badges";
 import { formatDateTimeUTC, formatPercent } from "@/lib/utils";
 
-export default function AdminSignalsPage() {
-  const accepted = HISTORICAL_SIGNALS.slice(0, 100);
-  const rejected = REJECTED_OPPORTUNITIES;
+export const dynamic = "force-dynamic";
+
+export default async function AdminSignalsPage() {
+  const [accepted, rejected] = await Promise.all([getAcceptedSignals(), getRejectedOpportunities()]);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Signals</h1>
-        <p className="text-sm text-muted-foreground">Both accepted signals and rejected opportunities are retained for analysis.</p>
+        <p className="text-sm text-muted-foreground">Real accepted signals and real rejected opportunities, both retained for analysis.</p>
       </div>
-      <DemoDataBanner />
 
       <Tabs defaultValue="accepted">
         <TabsList>
@@ -27,6 +27,9 @@ export default function AdminSignalsPage() {
         <TabsContent value="accepted">
           <Card>
             <CardContent className="p-0">
+              {accepted.length === 0 && (
+                <p className="p-4 text-sm text-muted-foreground">No signals generated yet — real, just empty right now.</p>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -47,7 +50,7 @@ export default function AdminSignalsPage() {
                       <TableCell><DirectionBadge direction={s.direction} /></TableCell>
                       <TableCell className="font-mono-tabular">{s.confidence !== null ? formatPercent(s.confidence) : "—"}</TableCell>
                       <TableCell><GradeBadge grade={s.grade} /></TableCell>
-                      <TableCell>{s.expiryMinutes}m</TableCell>
+                      <TableCell>{s.expiryMinutes ? `${s.expiryMinutes}m` : "—"}</TableCell>
                       <TableCell className={s.result === "WON" ? "text-call" : s.result === "LOST" ? "text-put" : "text-muted-foreground"}>{s.result}</TableCell>
                     </TableRow>
                   ))}
@@ -60,13 +63,16 @@ export default function AdminSignalsPage() {
         <TabsContent value="rejected">
           <Card>
             <CardContent className="p-0">
+              {rejected.length === 0 && (
+                <p className="p-4 text-sm text-muted-foreground">No rejected opportunities yet — real, just empty right now.</p>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Time</TableHead>
                     <TableHead>Asset</TableHead>
                     <TableHead>Potential direction</TableHead>
-                    <TableHead>Confidence</TableHead>
+                    <TableHead>Technical score</TableHead>
                     <TableHead>Reason</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -76,7 +82,7 @@ export default function AdminSignalsPage() {
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeUTC(r.generatedAt)}</TableCell>
                       <TableCell>{ASSET_CONFIGS[r.asset].displayName}</TableCell>
                       <TableCell><DirectionBadge direction={r.potentialDirection} /></TableCell>
-                      <TableCell className="font-mono-tabular">{r.confidence !== null ? formatPercent(r.confidence) : "—"}</TableCell>
+                      <TableCell className="font-mono-tabular">{r.technicalScore}/100</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{r.reason}</TableCell>
                     </TableRow>
                   ))}

@@ -14,6 +14,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.collector.market_hours import is_market_open
+from app.collector.resolution import resolve_expired_signals
 from app.collector.service import run_poll_cycle
 from app.config import get_settings
 from app.market_data.base import MarketDataProvider
@@ -58,6 +59,15 @@ async def run_all_assets(*, force: bool = False) -> None:
     provider = build_provider()
     for asset in Asset:
         await run_poll_cycle(asset, provider, poll_outputsize=settings.poll_outputsize)
+
+    # Signal resolution (spec section 49) -- checks real candles against
+    # any ACTIVE signal whose expiry has passed. Reads already-stored
+    # data only, no provider calls, so it's safe and cheap to run every
+    # cycle regardless of how many (if any) new candles just came in.
+    try:
+        resolve_expired_signals()
+    except Exception:  # noqa: BLE001 -- a resolution failure must never block candle collection
+        logger.exception("signal resolution failed")
 
 
 def start_scheduler() -> AsyncIOScheduler:
