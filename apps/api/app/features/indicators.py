@@ -177,9 +177,16 @@ def atr_latest(candles: list[dict], period: int = 14) -> float | None:
 
 def atr_percentile(candles: list[dict], period: int = 14, lookback: int = 100) -> float | None:
     """Where the current ATR sits vs its own recent history (0-100). Needs
-    at least `period + 1 + 20` candles to be a meaningful percentile (an
-    honest minimum sample size, not a fixed 100 -- fewer real observations
-    just means a smaller, still-real, comparison window).
+    at least 20 ATR observations to be a meaningful percentile (an honest
+    minimum sample size, not a fixed 100 -- fewer real observations just
+    means a smaller, still-real, comparison window).
+
+    Ties use the midpoint convention: a value equal to others counts as
+    half-below, half-above. This matters -- counting ties as "below"
+    would score a perfectly flat-volatility market at the 100th
+    percentile and have the regime engine call it HIGH_VOLATILITY, which
+    is exactly backwards. Steady volatility should read as ordinary (50),
+    and it does.
     """
     series = atr_series(candles, period)
     valid = [v for v in series if v is not None]
@@ -187,8 +194,9 @@ def atr_percentile(candles: list[dict], period: int = 14, lookback: int = 100) -
         return None
     window = valid[-lookback:]
     current = window[-1]
-    rank = sum(1 for v in window if v <= current)
-    return rank / len(window) * 100
+    below = sum(1 for v in window if v < current)
+    equal = sum(1 for v in window if v == current)
+    return (below + 0.5 * equal) / len(window) * 100
 
 
 @dataclass(frozen=True)

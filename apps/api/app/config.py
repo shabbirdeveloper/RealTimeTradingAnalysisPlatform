@@ -41,9 +41,22 @@ class Settings(BaseSettings):
     # self-heals on the next successful call instead of leaving a gap.
     poll_outputsize: int = Field(default=30, ge=12, le=200)
 
+    # Shared secret for this service's admin endpoints (currently the
+    # backtest trigger). This service has no user auth of its own -- it
+    # runs with the service-role key and is meant to sit on a private
+    # network, not the public internet. This is a deliberate minimum bar,
+    # not a real auth system: if it is unset, admin routes refuse to run
+    # rather than defaulting open. Anything internet-facing needs a proper
+    # auth layer in front of this service regardless.
+    admin_api_key: str | None = Field(default=None)
+
     @property
     def has_real_provider(self) -> bool:
         return bool(self.twelve_data_api_key)
+
+    @property
+    def has_admin_api_key(self) -> bool:
+        return bool(self.admin_api_key)
 
     @property
     def has_supabase(self) -> bool:

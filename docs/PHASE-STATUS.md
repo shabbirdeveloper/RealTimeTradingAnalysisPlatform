@@ -8,7 +8,7 @@ Tracking against the 10 phases defined in the project spec.
 | 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | **Confirmed working end-to-end** — `apps/api/` (Python/FastAPI) fetches real M5 candles from Twelve Data, derives M15/H1/H4 in-process, writes both into `candles`, and reports per-asset status into `system_health`. Feature calculation (spec section 6) is now real too — see Phase 3 below. |
 | 3 | Technical analysis, structure analysis, regime engine, multi-timeframe engine | **Real, rule-based implementation** in `apps/api/app/features/` — computed from real stored candles on every poll cycle. See "Real signal engine" below for exactly what is and isn't real yet. |
 | 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | **Real, rule-based decision engine** (`apps/api/app/features/signal_engine.py`) writing into the real `signals` table. Expiry scoring is real; the meta trade/no-trade model (spec section 12) and calibrated confidence are not — see below. Signal resolution (spec section 49 — marking WON/LOST/DRAW at expiry) is not built yet, so history/performance still can't be computed from real outcomes. |
-| 5 | Backtesting engine, result calculation, analytics | **Signal resolution is real** (`apps/api/app/collector/resolution.py` — marks ACTIVE signals WON/LOST/DRAW at expiry against the real closing price; spec section 49). `/dashboard/history` and `/dashboard/performance` now read real resolved-signal data — honestly all/mostly-zero until real signals accumulate real outcomes. The `/admin/backtesting` historical-range backtester itself (spec section 13) is not built — still the frontend demo builder. |
+| 5 | Backtesting engine, result calculation, analytics | **Real.** Signal resolution (`app/collector/resolution.py`, spec section 49) marks signals WON/LOST/DRAW at expiry against the real closing price. The historical backtester (`app/backtesting/`, spec section 13) replays the real signal engine over stored candles with an enforced no-look-ahead guarantee, and `/admin/backtesting` reads real runs. Both are honestly limited by how much real candle history exists — see "Backtesting engine" below. |
 | 6 | ML pipeline, independent models, meta model, probability calibration | Not started. UI already distinguishes `MODEL_NOT_READY` from a calibrated confidence, per spec section 10 |
 | 7 | News filter, economic calendar | Frontend UI + static demo calendar data only; no real economic-calendar API integration |
 | 8 | Browser/Telegram notifications, PWA | Notification preferences UI built; manifest wired; service worker and real push delivery not implemented |
@@ -97,6 +97,89 @@ the tradeoffs and a safe default (360s). Now that the pipeline is
 verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
+
+## Backtesting engine (Phase 5) — `apps/api/app/backtesting/`
+
+Replays the real signal engine over stored candle history and measures
+how the rules would actually have performed. This is what makes the
+indicator/regime weights (flagged elsewhere as unvalidated starting
+guesses) testable rather than permanent assumptions.
+
+**The no-look-ahead guarantee**, which is the whole reason a backtester
+is worth anything (spec section 13: "Do NOT use look-ahead bias. Do NOT
+use future data in feature calculation."):
+
+- `replay.py` reduces it to one rule, enforced in one place: *at
+  simulated time T, only candles that had already CLOSED at T exist.*
+  The filter is `open_time + timeframe_duration <= as_of`, never
+  `open_time <= as_of` — an H4 bar opening at 12:00 tells you nothing at
+  13:00, and treating it as visible would leak up to four hours of
+  future price into a decision.
+- `tests/test_replay.py` proves it: one test builds a clean uptrend,
+  records the decision at a timestamp, then violently corrupts every bar
+  after that timestamp to 999999.0 and asserts the decision is
+  bit-for-bit identical (direction, score, regime, chosen expiry, entry
+  price, and every per-expiry candidate). A guard test first asserts the
+  fixture produces a real accepted CALL — otherwise the spike test could
+  pass trivially by short-circuiting on insufficient data.
+
+**Design choices that keep the numbers meaningful:**
+- It calls the same `build_signal()` the live collector calls. There is
+  no separate "backtest strategy" that could drift from what actually
+  runs in production.
+- It resolves outcomes with the same rule as the live resolution job
+  (close of the first M5 candle at/after expiry; equal price = DRAW), so
+  backtest and live results are directly comparable. Both share the same
+  documented approximation — that close is up to 5 minutes past the
+  exact expiry moment — rather than differing silently.
+- An accepted signal whose expiry falls past the end of stored history
+  is counted as **unresolved**, never guessed, and the run reports how
+  many.
+- `build_signal()` gained a `technical_score_threshold` parameter purely
+  so the backtester can sweep it (spec section 32's "minimum
+  confidence" input) without duplicating any strategy logic.
+
+**A real bug this surfaced:** `atr_percentile()` counted ties as
+"below", so a perfectly flat-volatility market scored at the 100th
+percentile and the regime engine called it HIGH_VOLATILITY — exactly
+backwards, and it would have suppressed signals in calm markets. Now
+uses the standard midpoint tie convention (steady volatility reads as
+50). Found only because the backtest fixture produced constant-range
+candles; regression test added.
+
+**Naming honesty:** the schema column is `min_confidence` and spec
+section 32 calls the input "minimum confidence", but there is no
+calibrated model confidence to threshold on (Phase 6). The API field is
+named `min_technical_score` and the UI labels it "Min technical score",
+because calling it confidence would imply a model that doesn't exist.
+
+**API** (spec section 48): `POST /admin/backtests` queues a run in a
+background task (a long replay shouldn't hold a request open) and
+`GET /admin/backtests/{id}` polls it; rows move PENDING → RUNNING →
+COMPLETED/FAILED, so a crash leaves a FAILED row with its error rather
+than a stuck PENDING one.
+
+**Auth caveat, stated plainly:** `apps/api` has no user auth of its own
+— it holds the Supabase service-role key and is meant to sit on a
+private network. The admin endpoints check a shared secret
+(`ADMIN_API_KEY`, sent as `X-Admin-Api-Key`) and **fail closed**: with
+no key configured they refuse every request rather than defaulting open.
+That is a minimum bar, not a real auth system. Anything internet-facing
+needs a proper auth layer in front of this service.
+
+**What a backtest can and cannot tell you right now:** it can only cover
+candle history that has actually been collected, which is currently very
+little. A run over a few days is a smoke test of the rules — it proves
+the pipeline works and catches obvious breakage. It is *not* evidence of
+accuracy, and the UI says so. Spec section 15's bar (sufficient verified
+unseen results) is a matter of accumulated real time, not more code.
+
+Verified: 67 tests passing (up from 43 — 24 new across `test_replay.py`
+and `test_backtest_engine.py`), `tsc --noEmit` and `next lint` clean, and
+a static check confirming all 69 internal `app.*` imports resolve to real
+symbols (neither sandbox can reach PyPI, so a live FastAPI import test
+wasn't possible from here — **restarting `apps/api` on your machine is
+still the real first run**).
 
 ## Signal resolution + History/Performance/Analyzer/Admin wired to real data
 
@@ -343,7 +426,9 @@ as above.
 1. **Push the latest commits** (see the push constraint noted above —
    this session can commit locally but can't push) and restart the
    `apps/api` process on your machine so it picks up the new feature/
-   signal engine code.
+   signal engine and backtesting code. Set `ADMIN_API_KEY` in
+   `apps/api/.env` first, or the backtest endpoints will refuse to run
+   (by design — they fail closed).
 2. Trigger one poll cycle (`POST /debug/poll-now`, or wait for the
    scheduler) and confirm real rows appear in Supabase's
    `market_features` and `signals` tables — the same "verify it actually
@@ -369,6 +454,16 @@ as above.
    (replacing the `any` placeholder currently there).
 8. Phase 6 (ML) and Phase 7 (news/calendar) are the two remaining honest
    gaps the signal engine explicitly warns about on every decision —
-   tackle news/calendar first (it's a data-integration problem); ML
-   needs real resolved-signal history from step 5 to train against
-   first, so it naturally comes after.
+   tackle news/calendar first (it's a data-integration problem, and it
+   needs a provider/API-key decision); ML needs real resolved-signal
+   history to train against, so it naturally comes after.
+9. Once a few weeks of real candle history exists, use the backtester to
+   actually validate the signal engine's weights and thresholds instead
+   of leaving them as the starting guesses they currently are. That is
+   the single highest-value use of the backtester, and the reason it was
+   built before the ML phase.
+10. Remaining demo surfaces, in rough priority order: `/dashboard/calendar`
+    + `/admin/news` (Phase 7), `/admin/models` + `/admin/backtesting/compare`
+    (Phase 6), `/dashboard/billing` + `/admin/subscriptions` (Phase 10,
+    needs a payment provider), `/admin/users` (cheap — real `profiles`
+    data already exists), `/admin/logs` (needs audit logging wired up).

@@ -73,16 +73,17 @@ Then check `http://127.0.0.1:8000/health`.
 
 ## Running the tests
 
-`app/aggregation.py` and everything under `app/features/` (indicators,
-structure, regime, timeframe bias, the signal engine) are unit-tested —
-all zero-dependency, pure Python, so they run anywhere Python 3.10+
-runs, no `pip install` required:
+`app/aggregation.py`, everything under `app/features/` (indicators,
+structure, regime, timeframe bias, the signal engine), and the
+backtester's replay/engine core under `app/backtesting/` are
+unit-tested — all zero-dependency, pure Python, so they run anywhere
+Python 3.10+ runs, no `pip install` required:
 
 ```bash
 python -m unittest discover -s tests -t . -v
 ```
 
-(43/43 passing as of when this was written.) The storage layer, the
+(67/67 passing as of when this was written.) The storage layer, the
 provider, and the scheduler depend on `fastapi`/`httpx`/`supabase`/
 `apscheduler`, which are exercised by actually running the service (see
 "Verified this session" in `docs/PHASE-STATUS.md`) rather than by unit
@@ -110,6 +111,19 @@ project**; that's the next thing to do after restarting this service.
   section for exactly what's real and what's explicitly not (no
   calibrated ML confidence, no meta model, no news filter, thin early
   history).
-- No signal resolution job yet (spec section 49) — nothing marks a
-  signal WON/LOST/DRAW once its expiry passes, so real accuracy stats
-  aren't computable yet.
+- Signal resolution (spec section 49) and the historical backtester
+  (spec section 13) are both real now — see `app/collector/resolution.py`
+  and `app/backtesting/`. The backtester's no-look-ahead guarantee lives
+  in `app/backtesting/replay.py` and is covered by a regression test that
+  corrupts all future candles and asserts an earlier decision is
+  unchanged.
+- **This service has no user auth.** It holds the Supabase service-role
+  key and assumes a private network. The admin endpoints
+  (`POST /admin/backtests`, `GET /admin/backtests/{id}`) check a shared
+  secret in the `X-Admin-Api-Key` header against `ADMIN_API_KEY` and fail
+  closed when it is unset. That is a minimum bar, not real auth — put a
+  proper auth layer in front of this service before exposing it publicly,
+  and remove or gate `/debug/poll-now` as noted above.
+- Backtest results are only as meaningful as the candle history stored so
+  far. A run over a few days is a smoke test of the rules, not evidence
+  of accuracy (spec section 15).

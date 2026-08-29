@@ -16,6 +16,7 @@ import logging
 
 from fastapi import FastAPI
 
+from app.api.routes import admin_backtests as admin_backtest_routes
 from app.api.routes import debug as debug_routes
 from app.api.routes import health as health_routes
 from app.collector.scheduler import run_all_assets, start_scheduler, stop_scheduler
@@ -33,6 +34,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 app = FastAPI(title="NorthFXTrade Market Data Service", version="0.1.0")
 app.include_router(health_routes.router)
 app.include_router(debug_routes.router)
+app.include_router(admin_backtest_routes.router)
 
 
 @app.on_event("startup")

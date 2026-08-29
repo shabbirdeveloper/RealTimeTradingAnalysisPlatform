@@ -74,13 +74,22 @@ class TestAtr(unittest.TestCase):
         candles = [self._candle(101.0, 99.0, 100.0) for _ in range(16)]
         self.assertIsNone(ind.atr_percentile(candles, period=14))
 
-    def test_percentile_100_for_a_new_high(self):
+    def test_percentile_near_100_for_a_new_high(self):
         candles = [self._candle(100.5, 99.5, 100.0) for _ in range(40)]
         # widen the range sharply on the last candle only
         candles.append(self._candle(120.0, 80.0, 100.0))
         pct = ind.atr_percentile(candles, period=14)
         self.assertIsNotNone(pct)
-        self.assertEqual(pct, 100.0)
+        # Strictly the highest observation; the midpoint tie convention puts
+        # a unique maximum just under 100, not exactly at it.
+        self.assertGreater(pct, 95.0)
+
+    def test_flat_volatility_reads_as_ordinary_not_extreme(self):
+        # Every candle has an identical true range. This must NOT read as
+        # the 100th percentile -- steady volatility is ordinary, and the
+        # regime engine stands down on HIGH_VOLATILITY.
+        candles = [self._candle(101.0, 99.0, 100.0) for _ in range(40)]
+        self.assertEqual(ind.atr_percentile(candles, period=14), 50.0)
 
 
 class TestBollinger(unittest.TestCase):

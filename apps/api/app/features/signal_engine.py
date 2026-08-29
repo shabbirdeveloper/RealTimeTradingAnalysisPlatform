@@ -88,7 +88,14 @@ def build_signal(
     asset: str,
     candles_by_timeframe: dict[str, list[dict]],
     now: datetime | None = None,
+    *,
+    technical_score_threshold: int = TECHNICAL_SCORE_TAKE_THRESHOLD,
 ) -> SignalDecision:
+    """`technical_score_threshold` exists so the backtester can sweep it
+    (spec section 32's "minimum confidence" input) without duplicating any
+    of this logic. Live callers should leave it at the default -- a
+    threshold that only holds up in a backtest is exactly the kind of
+    curve-fit this project is supposed to catch, not ship."""
     now = now or datetime.now(timezone.utc)
     session = struct.session_for_time(now)
 
@@ -165,7 +172,7 @@ def build_signal(
         elif regime == "RANGING":
             score -= 8
         score = round(max(0.0, min(99.0, score)))
-        grade = "B" if score >= TECHNICAL_SCORE_TAKE_THRESHOLD else "REJECTED"
+        grade = "B" if score >= technical_score_threshold else "REJECTED"
         candidates.append(ExpiryCandidate(expiry_minutes=expiry, direction=proposed_direction, technical_score=int(score), grade=grade))
 
     eligible = [c for c in candidates if c.grade != "REJECTED"]
