@@ -4,53 +4,53 @@
 
 @layer base {
   :root {
-    /* Institutional light theme: white surfaces, deep navy ink and accents. */
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    /* Institutional dark theme: near-black navy surfaces, emerald/teal brand accent. */
+    --background: 222 22% 6%;
+    --foreground: 210 20% 96%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card: 220 20% 9%;
+    --card-foreground: 210 20% 96%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
+    --popover: 220 20% 8%;
+    --popover-foreground: 210 20% 96%;
 
-    --primary: 217 91% 28%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 160 84% 39%;
+    --primary-foreground: 160 90% 10%;
 
-    --secondary: 214 25% 93%;
-    --secondary-foreground: 222 47% 18%;
+    --secondary: 220 16% 14%;
+    --secondary-foreground: 210 20% 92%;
 
-    --muted: 214 25% 95%;
-    --muted-foreground: 215 16% 42%;
+    --muted: 220 16% 12%;
+    --muted-foreground: 217 12% 60%;
 
-    --accent: 217 55% 94%;
-    --accent-foreground: 222 47% 15%;
+    --accent: 220 16% 16%;
+    --accent-foreground: 210 20% 94%;
 
-    --destructive: 0 72% 42%;
+    --destructive: 356 78% 56%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 214 22% 88%;
-    --input: 214 22% 88%;
-    --ring: 217 91% 35%;
+    --border: 220 16% 16%;
+    --input: 220 16% 16%;
+    --ring: 160 84% 39%;
 
     --radius: 0.75rem;
 
-    /* Trading semantics — tuned to read as ink on pale tint chips, not as
-       light text on dark chips (this theme has no dark surfaces). */
-    --call: 152 64% 30%;
-    --call-foreground: 152 70% 20%;
-    --call-muted: 152 55% 94%;
+    /* Trading semantics — light ink on dark tint chips, matching this theme's
+       dark surfaces. */
+    --call: 160 84% 45%;
+    --call-foreground: 160 90% 92%;
+    --call-muted: 160 60% 14%;
 
-    --put: 356 72% 42%;
-    --put-foreground: 356 75% 32%;
-    --put-muted: 356 72% 95%;
+    --put: 356 85% 62%;
+    --put-foreground: 356 90% 95%;
+    --put-muted: 356 55% 17%;
 
-    --notrade: 32 90% 36%;
-    --notrade-foreground: 28 85% 26%;
-    --notrade-muted: 38 85% 94%;
+    --notrade: 38 92% 58%;
+    --notrade-foreground: 38 95% 88%;
+    --notrade-muted: 38 55% 16%;
 
-    --aplusplus: 38 88% 28%;
-    --aplusplus-foreground: 30 70% 14%;
+    --aplusplus: 45 96% 60%;
+    --aplusplus-foreground: 45 96% 12%;
 
     --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -62,19 +62,19 @@
     @apply border-border;
   }
   html {
-    color-scheme: light;
+    color-scheme: dark;
   }
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     background-image:
-      radial-gradient(ellipse 1100px 560px at 18% -8%, hsl(217 91% 28% / 0.05), transparent 60%),
-      radial-gradient(ellipse 900px 520px at 88% 0%, hsl(38 85% 34% / 0.035), transparent 55%);
+      radial-gradient(ellipse 1100px 560px at 18% -8%, hsl(160 84% 39% / 0.09), transparent 60%),
+      radial-gradient(ellipse 900px 520px at 88% 0%, hsl(45 96% 60% / 0.05), transparent 55%);
     background-repeat: no-repeat;
     background-attachment: fixed;
   }
   ::selection {
-    @apply bg-primary/15 text-foreground;
+    @apply bg-primary/30 text-foreground;
   }
   ::-webkit-scrollbar {
     width: 10px;
@@ -104,18 +104,15 @@
     mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 90%);
   }
 
-  /* Elevated card surface: soft depth + a hairline top highlight, no flashy glow.
-     Shadows are tinted toward the ink color rather than pure black, which reads
-     as a much softer, "paper-like" depth on a white/light-navy surface. */
+  /* Elevated card surface: soft depth + a hairline top highlight, no flashy glow. */
   .card-premium {
     position: relative;
     background:
-      linear-gradient(180deg, hsl(0 0% 100% / 0.7), transparent 40%),
+      linear-gradient(180deg, hsl(var(--foreground) / 0.025), transparent 40%),
       hsl(var(--card));
     box-shadow:
-      0 1px 0 0 hsl(0 0% 100% / 0.8) inset,
-      0 1px 2px 0 hsl(222 47% 11% / 0.04),
-      0 12px 24px -16px hsl(222 47% 11% / 0.12);
+      0 1px 0 0 hsl(var(--foreground) / 0.04) inset,
+      0 12px 28px -18px hsl(0 0% 0% / 0.65);
   }
 
   .card-premium-hover {
@@ -124,9 +121,8 @@
   .card-premium-hover:hover {
     transform: translateY(-1px);
     box-shadow:
-      0 1px 0 0 hsl(0 0% 100% / 0.9) inset,
-      0 4px 10px -4px hsl(222 47% 11% / 0.08),
-      0 18px 32px -18px hsl(222 47% 11% / 0.16);
+      0 1px 0 0 hsl(var(--foreground) / 0.05) inset,
+      0 18px 36px -18px hsl(0 0% 0% / 0.75);
   }
 
   /* Restrained gold treatment for A++ — a hairline ring + soft ambient falloff, not a neon glow. */
@@ -163,14 +159,14 @@
   .skeleton-shimmer {
     position: relative;
     overflow: hidden;
-    background: hsl(var(--secondary));
+    background: hsl(var(--secondary) / 0.55);
   }
   .skeleton-shimmer::after {
     content: "";
     position: absolute;
     inset: 0;
     transform: translateX(-100%);
-    background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.9), transparent);
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.07), transparent);
     animation: shimmer-sweep 1.8s ease-in-out infinite;
   }
 
