@@ -8,7 +8,8 @@ import { ArrowRight, ShieldCheck, Filter, LineChart, TrendingUp, AlertTriangle }
 export default function LandingPage() {
   return (
     <div>
-      <section className="relative overflow-hidden border-b border-border/70 bg-grid">
+      <section className="relative overflow-hidden border-b border-border/70">
+        <div className="bg-grid pointer-events-none absolute inset-0" />
         <div className="hero-float pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-[radial-gradient(ellipse_760px_420px_at_50%_-10%,hsl(var(--primary)/0.16),transparent_65%)]" />
         <div className="container relative flex flex-col items-center gap-7 py-24 text-center md:py-32">
           <span className="animate-in fade-in-0 slide-in-from-bottom-2 duration-500 ease-out inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
