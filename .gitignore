@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+apps/*/node_modules/
+services/*/node_modules/
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+apps/web/next-env.d.ts
+
+# Env files
+.env
+.env.local
+.env.*.local
+apps/*/.env
+apps/*/.env.local
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python (future services/)
+__pycache__/
+*.pyc
+.venv/
+venv/
