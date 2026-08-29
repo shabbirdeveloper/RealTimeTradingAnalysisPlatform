@@ -4,8 +4,8 @@ Tracking against the 10 phases defined in the project spec.
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Project architecture, database, auth, dashboard, responsive nav, assets, mock UI | Frontend shell done. Database schema written (`supabase/migrations/`, 8 files, all 17 tables + RLS) but not yet applied to a real Supabase project. Auth wiring (`src/lib/supabase/`, `middleware.ts`) is in place and no-ops safely until Supabase env vars are set — not yet connected or tested end-to-end. |
-| 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | Not started |
+| 1 | Project architecture, database, auth, dashboard, responsive nav, assets, mock UI | Frontend shell done. Database schema applied to a real Supabase project (confirmed — see below). Auth is wired for real and confirmed live: login/register/forgot-password/reset-password call actual `supabase.auth` methods, `apps/web/src/app/auth/callback/route.ts` handles email-link redirects, `middleware.ts` enforces server-side redirect protection on `/dashboard` and `/admin`. |
+| 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | **Confirmed working end-to-end** — `apps/api/` (Python/FastAPI) fetches real M5 candles from Twelve Data, derives M15/H1/H4 in-process, writes both into `candles`, and reports per-asset status into `system_health`. Verified live: real rows visible in Supabase's `candles` and `system_health` tables (not just "should work"). Feature calculation (spec section 6) not started — that's Phase 3. See "Market data collector service" below. |
 | 3 | Technical analysis, structure analysis, regime engine, multi-timeframe engine | Simulated in the frontend demo engine only (`apps/web/src/data/engine.ts`) — not a real implementation |
 | 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | Simulated in the frontend demo engine only |
 | 5 | Backtesting engine, result calculation, analytics | Demo-only backtest builder in the frontend (`buildDemoBacktest`) — not connected to any real historical data or execution logic |
@@ -15,10 +15,11 @@ Tracking against the 10 phases defined in the project spec.
 | 9 | Admin model tools, backtesting comparison, system monitoring | Frontend shells built with demo data; no real backend behind them |
 | 10 | Subscription/billing architecture | Frontend billing UI only; no payment provider integration |
 
-## Database schema (written, not yet applied)
+## Database schema (confirmed applied)
 
-`supabase/migrations/` has 8 SQL files covering all 17 tables from spec
-section 36, in dependency order:
+`supabase/migrations/` has 9 SQL files, run in order against the real
+Supabase project and confirmed working (the `assets`/`candles`/
+`system_health` tables are live and holding real rows):
 
 1. `20260829000001_extensions_and_enums.sql` — pgcrypto + all enum types
 2. `20260829000002_core_reference_tables.sql` — profiles, subscriptions, assets, economic_events (+ auto-create-profile-on-signup trigger)
@@ -27,28 +28,91 @@ section 36, in dependency order:
 5. `20260829000005_signals_tables.sql` — signals (spec section 37's exact columns), signal_results
 6. `20260829000006_backtesting_tables.sql` — backtests, backtest_signals
 7. `20260829000007_notifications_and_system_tables.sql` — notification_preferences (auto-created per user), notifications, system_health, audit_logs
-8. `20260829000008_rls_policies.sql` — RLS on every table. Read-only for `authenticated` on market/signal/model data; strictly own-row for profile/subscription/notifications; admin-only (via an `is_admin()` security-definer helper, to avoid the classic self-referential-RLS recursion) for backtests/audit_logs/system_health and the CANDIDATE/REJECTED half of signals. All actual writes are expected to come from the backend via the service-role key, which bypasses RLS — the policies here only cover what the browser is allowed to read/touch directly.
+8. `20260829000008_rls_policies.sql` — RLS on every table. Read-only for `authenticated` on market/signal/model data; strictly own-row for profile/subscription/notifications; admin-only (via an `is_admin()` security-definer helper, to avoid the classic self-referential-RLS recursion) for backtests/audit_logs/system_health and the CANDIDATE/REJECTED half of signals. All actual writes to those tables are expected to come from `apps/api` via the service-role key, which bypasses RLS — the policies here only cover what the browser is allowed to read/touch directly.
+9. `20260829000009_seed_assets.sql` — seeds the 3 configured instruments (XAUUSD/EURUSD/GBPUSD) into `assets`. Added this session after the collector's first real run failed with "assets table is missing rows" — migrations 1-8 create the schema but were never going to seed data on their own; this was a genuine gap, not an optional extra.
 
-**Not yet done:** this SQL has not been run against a real Postgres — it
-passed a structural sanity check (balanced parens/dollar-quotes) but not an
-actual `psql`/Supabase SQL editor execution, since no Supabase project is
-connected yet and this sandbox has no Postgres to test against. Running it
-in the Supabase SQL editor is also the first real syntax check it will get.
+## Market data collector service (`apps/api/`) — verified working
+
+A Python/FastAPI service, independent of `apps/web`, whose only job is to
+keep the `candles` table populated with real OHLC data:
+
+- `app/market_data/` — provider abstraction (`base.py`) plus two
+  implementations: `twelve_data_provider.py` (real REST calls to
+  `api.twelvedata.com`, forces UTC timestamps) and `demo_provider.py`
+  (deterministic, zero-network, clearly-arbitrary placeholder prices, for
+  exercising the pipeline without an API key).
+- `app/aggregation.py` — pure, dependency-free function that derives M15/
+  H1/H4 candles from stored M5 history, so the provider is only ever
+  asked for M5 (roughly 4x fewer API calls than fetching every
+  timeframe). Never emits a bucket that might still be forming — see the
+  module docstring for the exact closed-bucket rule. **Unit tested**:
+  `tests/test_aggregation.py`, 12/12 passing.
+- `app/storage/` — `candle_repository.py` (upserts into `candles`,
+  dedupes on the same `(asset_id, timeframe, open_time)` unique
+  constraint the migration defines) and `health_repository.py` (upserts
+  per-component rows into `system_health`, e.g. `market_data.XAUUSD`).
+- `app/collector/` — `service.py` (one poll cycle: fetch → store M5 →
+  aggregate → store M15/H1/H4 → report health) and `scheduler.py`
+  (APScheduler, runs `service.py` on an interval, skips weekends).
+- `app/api/routes/debug.py` — `POST /debug/poll-now`, a manual trigger
+  that bypasses the market-hours check, gated to `ENVIRONMENT=development`
+  only. Built specifically to let the pipeline be verified without
+  waiting for the market to be open. **Remove or put real auth in front
+  of this before any non-local deployment.**
+- `app/main.py` — FastAPI app; `GET /health` is a shallow self-check, real
+  per-asset freshness lives in `system_health` for the frontend to read
+  directly from Supabase (no custom WebSocket server here — real-time
+  delivery to the frontend is expected to go through **Supabase
+  Realtime** on the `candles` table, per spec's "Supabase Realtime where
+  appropriate").
+- `Dockerfile` — for the eventual AWS/VPS/Docker deployment; nothing
+  deployed yet, local `uvicorn` only.
+
+**Verified this session, on the user's real machine, against their real
+Supabase project:** `pip install -r requirements.txt` succeeded, the
+FastAPI app started cleanly, `POST /debug/poll-now` fetched real XAU/USD,
+EUR/USD, GBP/USD candles from Twelve Data, wrote them into `candles`
+(confirmed via Supabase Table Editor), and wrote `Healthy` rows into
+`system_health` for all three assets. This is the first genuinely
+end-to-end-tested piece of the whole project — not just "compiles" or
+"should work."
+
+**One open data-quality question, not a code bug:** during that test
+(run on a Saturday, market closed, via the debug bypass), Twelve Data
+returned an identical `open` value across all recent XAU/USD bars in the
+raw API response itself (confirmed via temporary raw-payload logging,
+since removed) while EUR/USD and GBP/USD opens varied normally. Likely
+explanation: gold-specific behavior on Twelve Data's side while the
+market is shut, not something in this codebase. **Needs re-checking once
+the market is actually open** (Sunday evening UTC onward) — re-run
+`POST /debug/poll-now` then and check whether XAU/USD opens vary properly
+during real trading. If they still don't, that's a real Twelve Data data
+quality problem for gold specifically and may need a different
+provider for XAU/USD.
+
+**API credit budget:** see `apps/api/README.md`'s "API credit budget"
+section — the default `POLL_INTERVAL_SECONDS=300` for 3 assets is
+slightly over Twelve Data's free 800 req/day tier; the README explains
+the tradeoffs and a safe default (360s). Now that the pipeline is
+verified, avoid further manual `/debug/poll-now` calls outside of the
+weekend-reopen data-quality check above — they spend real API credits
+for no additional verification value at this point.
 
 ## Next recommended step
 
-1. Create a Supabase project, run the 8 migration files above in order
-   (Supabase Dashboard -> SQL Editor, or `supabase db push` with the CLI),
-   and fix whatever the editor flags (expected on a first real run of SQL
-   that's never touched a live database).
-2. Add `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` to
-   `apps/web/.env.local` (see `apps/web/.env.example`) — the app will start
-   using them automatically since `src/lib/supabase/client.ts` /
-   `server.ts` / `middleware.ts` are already wired, but nothing has swapped
-   from demo data to real Supabase queries yet.
-3. Swap the frontend's demo data calls for real queries one page at a time —
-   starting with `/dashboard` and `/dashboard/signals`, since those are the
-   pages every other view links back to.
-4. Regenerate real TypeScript types once the schema is live:
+1. Once the market reopens, re-check the XAU/USD identical-open question
+   above — this is the one loose end from this session.
+2. Swap the frontend's demo data calls for real queries one page at a
+   time — starting with `/dashboard` and `/dashboard/signals`, since
+   those are the pages every other view links back to. Reading `candles`
+   + `system_health` directly (client-side via the anon key + RLS, which
+   is read-only there, or server components) is the natural first step.
+3. Consider adding Supabase Realtime subscriptions on `candles` for the
+   live-updating parts of the dashboard, per the "no custom WebSocket
+   server" decision above.
+4. Regenerate real TypeScript types now that the schema is live:
    `npx supabase gen types typescript --project-id <ref> > apps/web/src/types/database.ts`
    (replacing the `any` placeholder currently there).
+5. Let the normal scheduler (not manual polling) run during real trading
+   hours to build up genuine candle history for later phases (feature
+   engine, backtesting) to work with.
