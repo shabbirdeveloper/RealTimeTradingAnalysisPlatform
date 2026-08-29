@@ -4,15 +4,26 @@ import { ASSET_CONFIGS } from "@/data/assets";
 import { generateMarketSnapshot, generateSignal, generateTechnicalMetrics, generateStructureNotes } from "@/data/engine";
 import { HISTORICAL_SIGNALS, PERFORMANCE_SUMMARY } from "@/data/history";
 import type { AssetSymbol } from "@/types";
+import type { AssetPriceSnapshot } from "@/lib/market-data";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DirectionBadge, GradeBadge, RegimeBadge, DataStatusPill, DemoDataBanner } from "@/components/shared/badges";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTimeUTC, formatPercent, formatPrice } from "@/lib/utils";
-import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Minus, AlertTriangle } from "lucide-react";
 
-export function MarketPageContent({ asset }: { asset: AssetSymbol }) {
+/**
+ * Real price/24h-change/data-status when the market-data collector has
+ * written candles for this asset (priceSnapshot from Supabase, passed
+ * down from the async page component). Everything else on this page --
+ * bias, regime, indicators, structure, signal, expiry candidates, signal
+ * history, performance -- stays the frontend demo engine, honestly
+ * labeled, until the real feature/regime/signal engine (Phases 3-4) and
+ * backtesting (Phase 5) exist. Never mix a real price with a fabricated
+ * confidence/result -- spec section 50.
+ */
+export function MarketPageContent({ asset, priceSnapshot }: { asset: AssetSymbol; priceSnapshot?: AssetPriceSnapshot | null }) {
   const now = useNow(1000);
   const cfg = ASSET_CONFIGS[asset];
 
@@ -26,12 +37,17 @@ export function MarketPageContent({ asset }: { asset: AssetSymbol }) {
     );
   }
 
-  const snapshot = generateMarketSnapshot(asset, now);
+  const demoSnapshot = generateMarketSnapshot(asset, now);
   const signal = generateSignal(asset, now);
   const technical = generateTechnicalMetrics(asset, now);
   const structure = generateStructureNotes(asset, now);
   const recentSignals = HISTORICAL_SIGNALS.filter((s) => s.asset === asset).slice(0, 8);
   const perf = PERFORMANCE_SUMMARY.byAsset.find((b) => b.label === asset);
+
+  const hasRealPrice = Boolean(priceSnapshot);
+  const price = priceSnapshot?.price ?? demoSnapshot.price;
+  const change24hPct = priceSnapshot?.change24hPct ?? demoSnapshot.change24hPct;
+  const dataStatus = priceSnapshot?.dataStatus ?? demoSnapshot.dataStatus;
 
   return (
     <div className="space-y-6">
@@ -41,26 +57,38 @@ export function MarketPageContent({ asset }: { asset: AssetSymbol }) {
           <p className="text-sm text-muted-foreground">{cfg.contextFactors.join(" · ")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <DataStatusPill status={snapshot.dataStatus} />
-          <RegimeBadge regime={snapshot.regime} />
+          <DataStatusPill status={dataStatus} />
+          <RegimeBadge regime={demoSnapshot.regime} />
         </div>
       </div>
 
-      <DemoDataBanner />
+      {hasRealPrice ? (
+        <div className="flex items-start gap-2.5 rounded-lg border border-notrade/20 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-notrade" />
+          <span>
+            <strong className="font-semibold">Price and 24h change above are live</strong> from the market-data
+            collector. Everything else on this page — bias, regime, indicators, structure, signals, and performance —
+            is still a <strong className="font-semibold">synthetic placeholder</strong>; the regime/signal/ML engine
+            (Phases 3–4) and backtesting (Phase 5) haven&apos;t been built yet.
+          </span>
+        </div>
+      ) : (
+        <DemoDataBanner />
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Price" value={formatPrice(snapshot.price, cfg.pipDecimal)} />
+        <Stat label="Price" value={formatPrice(price, cfg.pipDecimal)} />
         <Stat
           label="24h change"
           value={
-            <span className={`flex items-center gap-0.5 ${snapshot.change24hPct > 0 ? "text-call" : snapshot.change24hPct < 0 ? "text-put" : "text-muted-foreground"}`}>
-              {snapshot.change24hPct > 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : snapshot.change24hPct < 0 ? <ArrowDownRight className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
-              {formatPercent(Math.abs(snapshot.change24hPct))}
+            <span className={`flex items-center gap-0.5 ${change24hPct > 0 ? "text-call" : change24hPct < 0 ? "text-put" : "text-muted-foreground"}`}>
+              {change24hPct > 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : change24hPct < 0 ? <ArrowDownRight className="h-3.5 w-3.5" /> : <Minus className="h-3.5 w-3.5" />}
+              {formatPercent(Math.abs(change24hPct))}
             </span>
           }
         />
-        <Stat label="Session" value={snapshot.session.replace("_", " ")} />
-        <Stat label="Bias (H4)" value={snapshot.bias} />
+        <Stat label="Session" value={demoSnapshot.session.replace("_", " ")} />
+        <Stat label="Bias (H4)" value={demoSnapshot.bias} />
       </div>
 
       <Tabs defaultValue="overview">
@@ -77,7 +105,7 @@ export function MarketPageContent({ asset }: { asset: AssetSymbol }) {
           <Card>
             <CardHeader><CardTitle>Multi-Timeframe Bias</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {snapshot.timeframes.map((tf) => (
+              {demoSnapshot.timeframes.map((tf) => (
                 <div key={tf.timeframe} className="rounded-md border border-border p-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold">{tf.timeframe}</span>

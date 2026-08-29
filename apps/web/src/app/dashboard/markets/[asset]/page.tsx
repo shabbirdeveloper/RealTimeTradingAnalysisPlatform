@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { MarketPageContent } from "@/components/dashboard/market-page-content";
+import { getAssetPriceSnapshot } from "@/lib/market-data";
 import type { AssetSymbol } from "@/types";
 
 const SLUG_MAP: Record<string, AssetSymbol> = {
@@ -16,5 +17,6 @@ export default async function MarketPage({ params }: { params: Promise<{ asset: 
   const { asset: assetParam } = await params;
   const asset = SLUG_MAP[assetParam.toLowerCase()];
   if (!asset) notFound();
-  return <MarketPageContent asset={asset} />;
+  const priceSnapshot = await getAssetPriceSnapshot(asset);
+  return <MarketPageContent asset={asset} priceSnapshot={priceSnapshot} />;
 }

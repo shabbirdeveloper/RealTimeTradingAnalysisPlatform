@@ -22,6 +22,49 @@ function classifyDataStatus(lastCandleTime: Date, now: Date): DataStatus {
   return "OFFLINE";
 }
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+async function fetchSnapshotForAssetId(
+  supabase: SupabaseServerClient,
+  assetId: string,
+  symbol: AssetSymbol,
+  now: Date
+): Promise<AssetPriceSnapshot | null> {
+  const [latestResult, oldestResult] = await Promise.all([
+    supabase
+      .from("candles")
+      .select("close, open_time")
+      .eq("asset_id", assetId)
+      .eq("timeframe", "M5")
+      .order("open_time", { ascending: false })
+      .limit(1),
+    supabase
+      .from("candles")
+      .select("close, open_time")
+      .eq("asset_id", assetId)
+      .eq("timeframe", "M5")
+      .order("open_time", { ascending: true })
+      .limit(1),
+  ]);
+
+  const latest = latestResult.data?.[0] as { close: string; open_time: string } | undefined;
+  const oldest = oldestResult.data?.[0] as { close: string; open_time: string } | undefined;
+  if (!latest) return null; // no data for this asset yet
+
+  const price = Number(latest.close);
+  const baseline = oldest ? Number(oldest.close) : price;
+  const change24hPct = baseline !== 0 ? ((price - baseline) / baseline) * 100 : 0;
+  const lastCandleTime = new Date(latest.open_time);
+
+  return {
+    asset: symbol,
+    price,
+    change24hPct,
+    dataStatus: classifyDataStatus(lastCandleTime, now),
+    lastUpdated: lastCandleTime.toISOString(),
+  };
+}
+
 /**
  * Reads real M5 candles from Supabase for each configured asset and
  * derives a price snapshot. An asset with no candles yet (collector
@@ -63,40 +106,7 @@ export async function getAssetPriceSnapshots(): Promise<
       (assets as { id: string; symbol: string }[]).map(async (assetRow) => {
         const symbol = assetRow.symbol as AssetSymbol;
         if (!ASSET_LIST.includes(symbol)) return;
-
-        const [latestResult, oldestResult] = await Promise.all([
-          supabase
-            .from("candles")
-            .select("close, open_time")
-            .eq("asset_id", assetRow.id)
-            .eq("timeframe", "M5")
-            .order("open_time", { ascending: false })
-            .limit(1),
-          supabase
-            .from("candles")
-            .select("close, open_time")
-            .eq("asset_id", assetRow.id)
-            .eq("timeframe", "M5")
-            .order("open_time", { ascending: true })
-            .limit(1),
-        ]);
-
-        const latest = latestResult.data?.[0] as { close: string; open_time: string } | undefined;
-        const oldest = oldestResult.data?.[0] as { close: string; open_time: string } | undefined;
-        if (!latest) return; // no data for this asset yet -- stays null
-
-        const price = Number(latest.close);
-        const baseline = oldest ? Number(oldest.close) : price;
-        const change24hPct = baseline !== 0 ? ((price - baseline) / baseline) * 100 : 0;
-        const lastCandleTime = new Date(latest.open_time);
-
-        result[symbol] = {
-          asset: symbol,
-          price,
-          change24hPct,
-          dataStatus: classifyDataStatus(lastCandleTime, now),
-          lastUpdated: lastCandleTime.toISOString(),
-        };
+        result[symbol] = await fetchSnapshotForAssetId(supabase, assetRow.id, symbol, now);
       })
     );
   } catch {
@@ -104,4 +114,36 @@ export async function getAssetPriceSnapshots(): Promise<
   }
 
   return result;
+}
+
+/**
+ * Same as getAssetPriceSnapshots() but for a single asset -- used by
+ * per-market detail pages so they don't fetch all three assets' candles
+ * just to show one. Returns null under the same conditions (no data yet,
+ * Supabase not configured, any failure) -- never throws, never fakes.
+ */
+export async function getAssetPriceSnapshot(
+  asset: AssetSymbol
+): Promise<AssetPriceSnapshot | null> {
+  try {
+    const supabase = await createClient();
+    const now = new Date();
+
+    const { data: assetRow, error: assetError } = await supabase
+      .from("assets")
+      .select("id, symbol")
+      .eq("symbol", asset)
+      .maybeSingle();
+
+    if (assetError || !assetRow) return null;
+
+    return await fetchSnapshotForAssetId(
+      supabase,
+      (assetRow as { id: string }).id,
+      asset,
+      now
+    );
+  } catch {
+    return null;
+  }
 }
