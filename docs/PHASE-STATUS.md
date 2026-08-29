@@ -8,7 +8,7 @@ Tracking against the 10 phases defined in the project spec.
 | 2 | Real market-data abstraction, candle storage, WebSocket data flow, feature calculation | **Confirmed working end-to-end** — `apps/api/` (Python/FastAPI) fetches real M5 candles from Twelve Data, derives M15/H1/H4 in-process, writes both into `candles`, and reports per-asset status into `system_health`. Feature calculation (spec section 6) is now real too — see Phase 3 below. |
 | 3 | Technical analysis, structure analysis, regime engine, multi-timeframe engine | **Real, rule-based implementation** in `apps/api/app/features/` — computed from real stored candles on every poll cycle. See "Real signal engine" below for exactly what is and isn't real yet. |
 | 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | **Real, rule-based decision engine** (`apps/api/app/features/signal_engine.py`) writing into the real `signals` table. Expiry scoring is real; the meta trade/no-trade model (spec section 12) and calibrated confidence are not — see below. Signal resolution (spec section 49 — marking WON/LOST/DRAW at expiry) is not built yet, so history/performance still can't be computed from real outcomes. |
-| 5 | Backtesting engine, result calculation, analytics | Demo-only backtest builder in the frontend (`buildDemoBacktest`) — not connected to any real historical data or execution logic |
+| 5 | Backtesting engine, result calculation, analytics | **Signal resolution is real** (`apps/api/app/collector/resolution.py` — marks ACTIVE signals WON/LOST/DRAW at expiry against the real closing price; spec section 49). `/dashboard/history` and `/dashboard/performance` now read real resolved-signal data — honestly all/mostly-zero until real signals accumulate real outcomes. The `/admin/backtesting` historical-range backtester itself (spec section 13) is not built — still the frontend demo builder. |
 | 6 | ML pipeline, independent models, meta model, probability calibration | Not started. UI already distinguishes `MODEL_NOT_READY` from a calibrated confidence, per spec section 10 |
 | 7 | News filter, economic calendar | Frontend UI + static demo calendar data only; no real economic-calendar API integration |
 | 8 | Browser/Telegram notifications, PWA | Notification preferences UI built; manifest wired; service worker and real push delivery not implemented |
@@ -97,6 +97,74 @@ the tradeoffs and a safe default (360s). Now that the pipeline is
 verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
+
+## Signal resolution + History/Performance/Analyzer/Admin wired to real data
+
+Third round this session, after the user asked why the remaining pages
+(Performance screenshot specifically) were still demo. The honest answer
+for Performance/History specifically was "there's no shortcut — a real
+accuracy number needs real signals to actually expire and get checked,"
+so this round built exactly that:
+
+- `apps/api/app/collector/resolution.py` (new) + a new
+  `fetch_first_candle_at_or_after()` in `candle_repository.py`:
+  `resolve_expired_signals()` runs every poll cycle (wired into
+  `scheduler.py`, isolated so a resolution failure can't block candle
+  collection), finds ACTIVE directional signals whose `expiry_at` has
+  passed, looks up the real candle at/after that time (with its real
+  `source`), and marks WON/LOST (equal price → DRAW), writing both the
+  `signals` row and a `signal_results` audit row. A signal with no real
+  candle yet at/after its expiry is left alone for the next cycle —
+  never resolved from a guess.
+- `apps/web/src/lib/performance.ts` — real KPIs (wins/losses/accuracy/
+  streaks) and breakdowns (by asset/expiry/session/regime/technical-score
+  bucket — bucketed by Technical Score, not calibrated confidence, since
+  that still doesn't exist) computed from real `WON`/`LOST`/`DRAW` rows.
+  Wired into `/dashboard/performance`, which now says plainly when
+  nothing has resolved yet rather than showing fake 420/75.1%/etc.
+- `apps/web/src/lib/history.ts` — every real signal row this user can
+  see (RLS-gated), with `PENDING` shown for anything not yet resolved.
+  Wired into `/dashboard/history`, same filter UI as before, real data.
+- `apps/web/src/components/dashboard/analyzer-view.tsx` — `/dashboard/analyzer`
+  now picks from the latest real signal per asset and its real per-expiry
+  candidates instead of generating a new demo signal on every render.
+- `apps/web/src/lib/admin.ts` — `/admin/signals` now shows real accepted
+  signals and real rejected opportunities (spec section 30 — a
+  directional bias that never cleared the B-grade threshold, admin-only
+  via RLS). `/admin/market-data` shows real `system_health` +
+  last-real-candle time per asset, with missing-candle and API-error
+  tracking honestly labeled "not tracked yet" instead of a fabricated
+  zero that would imply monitoring exists. `/admin/system` shows real
+  `system_health` rows for the components that actually report
+  (`market_data.*`) and labels every other spec-named component (API,
+  Database, Feature Engine, ML Engine, News API, ...) "Not monitored"
+  rather than guessing Healthy.
+
+**Explicitly still demo/blocked, not faked, because each needs
+something this pass doesn't have:**
+- `/dashboard/calendar`, `/admin/news` — need a real economic-calendar
+  API integration (Phase 7). Needs a provider/API-key decision from the
+  user.
+- `/admin/backtesting`, `/admin/models`, `/admin/backtesting/compare` —
+  need the real historical backtesting engine (Phase 5's
+  `/admin/backtesting` specifically, distinct from resolution above) and
+  trained ML models (Phase 6). Substantial builds, not swaps.
+- `/dashboard/billing`, `/admin/subscriptions` — need a real payment
+  provider integration (Phase 10). Needs a provider decision from the
+  user (e.g. Stripe).
+- `/admin/users` — could read real `profiles` rows (the table already
+  exists and is populated by the signup trigger) but wasn't in this
+  pass's scope; a reasonable quick win for a future session.
+- `/admin/logs` — `audit_logs` table exists but nothing writes to it yet;
+  would need audit logging added across the app's mutating actions.
+
+Verified: `python -m unittest discover` (43/43, unchanged — resolution
+logic isn't independently unit tested this round since it's a thin
+Supabase read/write wrapper, same testing posture as the rest of
+`app/storage/`), `npx tsc --noEmit` (only the 3 pre-existing
+`@supabase/ssr` errors), `npx next lint` (clean). **Not yet run against
+the live Supabase project** — same next-action as the signal engine
+above: push, restart `apps/api`, let it run.
 
 ## Real signal engine (Phases 3 + 4) — `apps/api/app/features/`
 
