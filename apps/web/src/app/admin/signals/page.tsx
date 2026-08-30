@@ -1,4 +1,5 @@
-import { getAcceptedSignals, getRejectedOpportunities } from "@/lib/admin";
+import { getAcceptedSignals, getRejectedOpportunities, getThresholdCurve } from "@/lib/admin";
+import { ThresholdCurve } from "@/components/admin/threshold-curve";
 import { ASSET_CONFIGS } from "@/data/assets";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,7 +10,9 @@ import { formatDateTimeUTC, formatPercent } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export default async function AdminSignalsPage() {
-  const [accepted, rejected] = await Promise.all([getAcceptedSignals(), getRejectedOpportunities()]);
+  const [accepted, rejected, curve] = await Promise.all([
+    getAcceptedSignals(), getRejectedOpportunities(), getThresholdCurve(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -17,6 +20,8 @@ export default async function AdminSignalsPage() {
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Signals</h1>
         <p className="text-sm text-muted-foreground">Real accepted signals and real rejected opportunities, both retained for analysis.</p>
       </div>
+
+      <ThresholdCurve buckets={curve} />
 
       <Tabs defaultValue="accepted">
         <TabsList>

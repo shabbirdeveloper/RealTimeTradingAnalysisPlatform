@@ -14,7 +14,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.collector.market_hours import any_market_open, is_market_open
-from app.collector.resolution import resolve_expired_signals
+from app.collector.resolution import resolve_expired_signals, resolve_shadow_opportunities
 from app.collector.service import run_poll_cycle
 from app.config import get_settings
 from app.market_data.base import MarketDataProvider
@@ -75,6 +75,14 @@ async def run_all_assets(*, force: bool = False) -> None:
         resolve_expired_signals()
     except Exception:  # noqa: BLE001 -- a resolution failure must never block candle collection
         logger.exception("signal resolution failed")
+
+    # Counterfactual scoring of REJECTED setups. Isolated in its own try so a
+    # failure here can affect neither candle collection nor real resolution --
+    # this is analysis data, strictly less important than either.
+    try:
+        resolve_shadow_opportunities()
+    except Exception:  # noqa: BLE001
+        logger.exception("shadow resolution failed")
 
 
 def start_scheduler() -> AsyncIOScheduler:

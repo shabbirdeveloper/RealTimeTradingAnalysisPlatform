@@ -31,6 +31,7 @@ ACTION_BACKTEST_COMPLETED = "backtest.complete"
 ACTION_BACKTEST_FAILED = "backtest.failed"
 ACTION_MARKET_DATA_FAILED = "market_data.failed"
 ACTION_SIGNALS_RESOLVED = "signals.resolved"
+ACTION_SHADOW_RESOLVED = "signals.shadow_resolved"
 ACTION_ANALYSIS_FAILED = "analysis.failed"
 
 

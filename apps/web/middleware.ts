@@ -7,15 +7,36 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
  * /admin (spec section 38: "server-side role checks", not just a client
  * redirect).
  *
- * No-ops safely (passes the request through untouched, protection included)
- * if Supabase env vars aren't set yet, so the rest of the app keeps working
- * against demo data before a Supabase project is connected.
+ * FAILS CLOSED. An earlier version returned NextResponse.next() when the
+ * Supabase env vars were missing, on the reasoning that it should "no-op
+ * safely" before a project was connected. That reasoning is inverted: a
+ * security control whose configuration is absent must deny, not wave the
+ * request through. It was verified in production that /dashboard and
+ * /admin rendered fully for a request carrying no session cookies at all.
+ *
+ * Public routes still pass through when unconfigured, so the marketing
+ * pages keep working; protected routes do not.
  */
+const PROTECTED_PREFIXES = ["/dashboard", "/admin"] as const;
+
+function isProtected(pathname: string): boolean {
+  return PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { pathname: earlyPath } = request.nextUrl;
 
   if (!supabaseUrl || !supabaseAnonKey) {
+    if (isProtected(earlyPath)) {
+      // Cannot verify identity -> refuse. `error=config` distinguishes a
+      // misconfigured deployment from an ordinary signed-out redirect, so
+      // this doesn't get mistaken for a login loop.
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("error", "config");
+      return NextResponse.redirect(loginUrl);
+    }
     return NextResponse.next();
   }
 
@@ -41,10 +62,9 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
-  const isDashboard = pathname.startsWith("/dashboard");
-  const isAdmin = pathname.startsWith("/admin");
+  const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
 
-  if ((isDashboard || isAdmin) && !user) {
+  if (isProtected(pathname) && !user) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirectedFrom", pathname);
     return NextResponse.redirect(loginUrl);

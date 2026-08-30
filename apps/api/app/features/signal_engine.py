@@ -23,7 +23,7 @@ historical outcomes is exactly what the backtesting engine (spec section
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.features import structure as struct
 from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
@@ -33,6 +33,16 @@ from app.news.blackout import BlackoutConfig, EconomicEvent, evaluate_blackout
 
 EXPIRIES = (15, 30, 60)
 TECHNICAL_SCORE_TAKE_THRESHOLD = 78  # matches apps/web's gradeFromConfidence() B cutoff
+
+# How old the newest M5 candle may be before the engine refuses to decide.
+# Spec section 42 requires signal generation to pause on stale data.
+#
+# Three closed M5 bars. Tight enough that a stalled collector, a provider
+# outage, or a market gap is caught within ~15 minutes; loose enough to
+# tolerate one missed poll without going dark. Deliberately NOT derived from
+# the poll interval -- data freshness is a property of the market feed, not
+# of how often we happen to ask for it.
+MAX_CANDLE_AGE_MINUTES = 15
 
 
 @dataclass(frozen=True)
@@ -68,6 +78,36 @@ class SignalDecision:
     rejected_opportunity_direction: str | None = None
 
 
+def _staleness_reason(
+    m5_candles: list[dict], now: datetime, max_age_minutes: int
+) -> str | None:
+    """None when the newest candle is fresh enough to decide on, otherwise a
+    trader-readable explanation of why it isn't.
+
+    Measured from the candle's CLOSE (open_time + 5 min), not its open --
+    a bar that opened 6 minutes ago closed 1 minute ago and is perfectly
+    current. Measuring from open_time would reject healthy data.
+    """
+    if not m5_candles:
+        return "No M5 candles available — cannot analyse."
+
+    newest_open = m5_candles[-1].get("open_time")
+    if newest_open is None:
+        return "Newest candle has no timestamp — cannot establish data freshness."
+    if newest_open.tzinfo is None:
+        raise ValueError("candle open_time must be timezone-aware (UTC)")
+
+    close_time = newest_open + timedelta(minutes=5)
+    age_minutes = (now - close_time).total_seconds() / 60
+
+    if age_minutes > max_age_minutes:
+        return (
+            f"Market data is stale — newest candle closed {int(age_minutes)} min ago "
+            f"(limit {max_age_minutes} min). Signal generation paused until the feed recovers."
+        )
+    return None
+
+
 def _bias_label(direction: str) -> str:
     return {"CALL": "BULLISH", "PUT": "BEARISH"}.get(direction, "NEUTRAL")
 
@@ -95,6 +135,7 @@ def build_signal(
     economic_events: list[EconomicEvent] | None = None,
     calendar_available: bool = False,
     blackout_config: BlackoutConfig | None = None,
+    max_candle_age_minutes: int = MAX_CANDLE_AGE_MINUTES,
 ) -> SignalDecision:
     """`technical_score_threshold` exists so the backtester can sweep it
     (spec section 32's "minimum confidence" input) without duplicating any
@@ -139,6 +180,24 @@ def build_signal(
     warnings: list[str] = [
         "Meta trade/no-trade model not available yet (Phase 6) — this decision is technical-score-only.",
     ]
+
+    # ---- Staleness gate (spec section 42) --------------------------------
+    # Every indicator below is computed from these candles, and entry_price is
+    # the newest close. If that data is old, the whole decision describes a
+    # market that no longer exists -- and it would still render as a fully
+    # graded signal. The frontend shows a freshness badge, which makes an
+    # ungated engine actively misleading: the UI implies a check the engine
+    # never performed.
+    stale_reason = _staleness_reason(m5_candles, now, max_candle_age_minutes)
+    if stale_reason is not None:
+        warnings.append(stale_reason)
+        return SignalDecision(
+            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED",
+            expiry_minutes=None, market_regime="UNSTABLE", regime_reason=stale_reason,
+            entry_price=entry_price, session=session,
+            reasons=["Market data is not fresh enough to analyse."],
+            warnings=warnings, timeframes=timeframes, candidates=[], generated_at=now,
+        )
 
     blackout = evaluate_blackout(economic_events or [], asset, now, blackout_config)
     if not calendar_available:

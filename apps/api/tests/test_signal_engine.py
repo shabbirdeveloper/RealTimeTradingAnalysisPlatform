@@ -4,11 +4,22 @@ from datetime import datetime, timedelta, timezone
 from app.features.signal_engine import build_signal
 
 
-def make_candles(n: int, start_price: float, drift_per_bar: float, step_minutes: int, start=None, noise=0.0):
+def make_candles(n: int, start_price: float, drift_per_bar: float, step_minutes: int,
+                 start=None, noise=0.0, ending_at=None):
     """A clean, mostly-monotonic synthetic OHLC series for engine-level
     tests -- NOT used anywhere in the app itself, only here to exercise
-    build_signal() against inputs shaped like real stored candles."""
-    start = start or datetime(2026, 8, 24, 0, 0, tzinfo=timezone.utc)  # a Monday, well before "now"
+    build_signal() against inputs shaped like real stored candles.
+
+    Anchored so the series ENDS at `ending_at` (default: now), because the
+    engine now refuses to analyse stale data. A fixture pinned to a fixed
+    past date would be permanently stale and every test would trivially
+    return NO_TRADE -- which is exactly what happened when the staleness
+    gate was first added.
+    """
+    ending_at = ending_at or datetime.now(timezone.utc)
+    if start is None:
+        # Last bar closes exactly at `ending_at`.
+        start = ending_at - timedelta(minutes=step_minutes * n)
     candles = []
     price = start_price
     for i in range(n):
@@ -185,3 +196,81 @@ class TestSyntheticInstrumentGuard(unittest.TestCase):
     def test_real_symbol_still_works(self):
         decision = build_signal("EURUSD", self._history(), now=datetime.now(timezone.utc))
         self.assertIn(decision.direction, ("CALL", "PUT", "NO_TRADE"))
+
+
+class TestStalenessGate(unittest.TestCase):
+    """Spec section 42: signal generation must pause on stale data.
+
+    This is the gate that stops the engine describing a market that no
+    longer exists -- with an entry_price that is no longer tradeable.
+    """
+
+    def _history(self, ending_at):
+        return {
+            "H4": make_candles(250, 2000, 3.0, 240, ending_at=ending_at),
+            "H1": make_candles(250, 2000, 1.0, 60, ending_at=ending_at),
+            "M15": make_candles(250, 2000, 0.4, 15, ending_at=ending_at),
+            "M5": make_candles(250, 2000, 0.2, 5, ending_at=ending_at),
+        }
+
+    def test_fresh_data_still_produces_a_signal(self):
+        """Guards the tests below from passing because the fixture is broken."""
+        now = datetime.now(timezone.utc)
+        decision = build_signal("XAUUSD", self._history(now), now=now)
+        self.assertNotEqual(decision.direction, "NO_TRADE")
+        self.assertFalse(any("stale" in w.lower() for w in decision.warnings))
+
+    def test_stale_data_blocks_the_signal(self):
+        now = datetime.now(timezone.utc)
+        # Same history, but evaluated three hours later -- a stalled collector.
+        decision = build_signal("XAUUSD", self._history(now), now=now + timedelta(hours=3))
+        self.assertEqual(decision.direction, "NO_TRADE")
+        self.assertEqual(decision.grade, "REJECTED")
+        self.assertIsNone(decision.expiry_minutes)
+        self.assertTrue(any("stale" in w.lower() for w in decision.warnings))
+
+    def test_age_is_measured_from_candle_close_not_open(self):
+        """A bar that opened 6 minutes ago closed 1 minute ago and is fresh.
+        Measuring from open_time would reject perfectly good data."""
+        now = datetime.now(timezone.utc)
+        history = self._history(now - timedelta(minutes=1))  # last close 1 min ago
+        decision = build_signal("XAUUSD", history, now=now)
+        self.assertFalse(any("stale" in w.lower() for w in decision.warnings))
+
+    def test_boundary_just_inside_the_limit_is_allowed(self):
+        now = datetime.now(timezone.utc)
+        history = self._history(now - timedelta(minutes=14))
+        decision = build_signal("XAUUSD", history, now=now, max_candle_age_minutes=15)
+        self.assertFalse(any("stale" in w.lower() for w in decision.warnings))
+
+    def test_boundary_just_outside_the_limit_is_blocked(self):
+        now = datetime.now(timezone.utc)
+        history = self._history(now - timedelta(minutes=16))
+        decision = build_signal("XAUUSD", history, now=now, max_candle_age_minutes=15)
+        self.assertTrue(any("stale" in w.lower() for w in decision.warnings))
+
+    def test_threshold_is_configurable(self):
+        now = datetime.now(timezone.utc)
+        history = self._history(now - timedelta(minutes=45))
+        self.assertTrue(any("stale" in w.lower()
+                            for w in build_signal("XAUUSD", history, now=now).warnings))
+        self.assertFalse(any("stale" in w.lower()
+                             for w in build_signal("XAUUSD", history, now=now,
+                                                   max_candle_age_minutes=90).warnings))
+
+    def test_empty_history_is_reported_not_crashed(self):
+        now = datetime.now(timezone.utc)
+        history = self._history(now)
+        history["M5"] = []
+        decision = build_signal("XAUUSD", history, now=now)
+        self.assertEqual(decision.direction, "NO_TRADE")
+
+    def test_stale_decision_carries_no_tradeable_entry_expiry(self):
+        """The dangerous failure would be emitting a graded signal with a
+        stale entry price. Assert nothing actionable escapes."""
+        now = datetime.now(timezone.utc)
+        decision = build_signal("XAUUSD", self._history(now), now=now + timedelta(hours=6))
+        self.assertIsNone(decision.expiry_minutes)
+        self.assertEqual(decision.technical_score, 0)
+        self.assertEqual(decision.candidates, [])
+        self.assertIsNone(decision.rejected_opportunity_direction)

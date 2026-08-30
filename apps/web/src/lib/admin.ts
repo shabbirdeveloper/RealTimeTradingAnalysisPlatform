@@ -244,3 +244,67 @@ export async function getAdminUsers(): Promise<AdminUsersResult> {
     return { ok: false, error: err instanceof Error ? err.message : "Could not load users." };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Threshold curve — win rate by technical score, accepted vs rejected
+// ---------------------------------------------------------------------------
+
+export interface ThresholdBucket {
+  label: string;
+  low: number;
+  accepted: { wins: number; losses: number; draws: number };
+  rejected: { wins: number; losses: number; draws: number };
+}
+
+const BUCKETS: { label: string; low: number; high: number }[] = [
+  { label: "<60", low: 0, high: 60 },
+  { label: "60–69", low: 60, high: 70 },
+  { label: "70–77", low: 70, high: 78 },
+  { label: "78–84", low: 78, high: 85 },
+  { label: "85–89", low: 85, high: 90 },
+  { label: "90+", low: 90, high: 100 },
+];
+
+/**
+ * The curve that tells you where the quality threshold should actually sit.
+ *
+ * `accepted` outcomes come from real resolved signals; `rejected` outcomes are
+ * counterfactuals from shadow resolution — what would have happened had the
+ * engine taken the setups it declined. Comparing the two is the only way to
+ * know whether the threshold is doing anything: if rejected setups win at the
+ * same rate as accepted ones, the filter is noise.
+ *
+ * Shadow outcomes live in separate columns and never touch reported accuracy.
+ */
+export async function getThresholdCurve(): Promise<ThresholdBucket[]> {
+  const empty = () => ({ wins: 0, losses: 0, draws: 0 });
+  const buckets: ThresholdBucket[] = BUCKETS.map((b) => ({
+    label: b.label, low: b.low, accepted: empty(), rejected: empty(),
+  }));
+
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("signals")
+      .select("technical_score, status, result, shadow_result")
+      .or("result.not.is.null,shadow_result.not.is.null")
+      .limit(20000);
+    if (error || !data) return buckets;
+
+    for (const row of data as Array<{
+      technical_score: number; status: string;
+      result: string | null; shadow_result: string | null;
+    }>) {
+      const idx = BUCKETS.findIndex((b) => row.technical_score >= b.low && row.technical_score < b.high);
+      if (idx < 0) continue;
+      const target = row.status === "REJECTED" ? buckets[idx].rejected : buckets[idx].accepted;
+      const verdict = row.status === "REJECTED" ? row.shadow_result : row.result;
+      if (verdict === "WON") target.wins += 1;
+      else if (verdict === "LOST") target.losses += 1;
+      else if (verdict === "DRAW") target.draws += 1;
+    }
+    return buckets;
+  } catch {
+    return buckets;
+  }
+}

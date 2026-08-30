@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from app.backtesting import replay
+from app.features.outcome import outcome
 from app.features.signal_engine import build_signal
 
 logger = logging.getLogger(__name__)
@@ -198,12 +199,9 @@ def run_backtest(
                 if exit_candle is not None:
                     closing_price = float(exit_candle["close"])
                     entry_price = opportunity.entry_price
-                    if closing_price == entry_price:
-                        opportunity.result = "DRAW"
-                    elif direction == "CALL":
-                        opportunity.result = "WON" if closing_price > entry_price else "LOST"
-                    else:
-                        opportunity.result = "WON" if closing_price < entry_price else "LOST"
+                    # Same shared rule as live and shadow resolution -- see
+                    # app/features/outcome.py for why that matters.
+                    opportunity.result = outcome(direction, entry_price, closing_price)
                     opportunity.closing_price = closing_price
                 # else: history doesn't reach expiry -- left unresolved, never guessed
 

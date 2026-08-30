@@ -13,7 +13,12 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectedFrom = searchParams.get("redirectedFrom");
-  const callbackFailed = searchParams.get("error") === "auth_callback_failed";
+  const errorParam = searchParams.get("error");
+  const callbackFailed = errorParam === "auth_callback_failed";
+  // Set by middleware when Supabase env vars are missing in its runtime.
+  // Surfaced distinctly so a misconfigured deployment doesn't look like an
+  // ordinary expired session -- the user can't fix it by signing in again.
+  const configMissing = errorParam === "config";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -74,6 +79,12 @@ function LoginForm() {
               autoComplete="current-password"
             />
           </div>
+          {configMissing && (
+            <p className="rounded-md border border-put/30 bg-put-muted px-3 py-2 text-sm text-put-foreground">
+              Sign-in is unavailable: this deployment is missing its authentication configuration. Signing in again
+              won&apos;t help — the server needs its Supabase environment variables set.
+            </p>
+          )}
           {(error || callbackFailed) && (
             <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error ?? "That link expired or was already used. Please try again."}
