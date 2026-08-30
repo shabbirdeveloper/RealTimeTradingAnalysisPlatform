@@ -30,6 +30,8 @@ _SYMBOL_MAP: dict[Asset, str] = {
     Asset.XAUUSD: "XAU/USD",
     Asset.EURUSD: "EUR/USD",
     Asset.GBPUSD: "GBP/USD",
+    Asset.BTCUSD: "BTC/USD",
+    Asset.ETHUSD: "ETH/USD",
 }
 
 

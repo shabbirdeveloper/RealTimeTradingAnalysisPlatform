@@ -161,3 +161,27 @@ class TestNewsProtection(unittest.TestCase):
             economic_events=[event], calendar_available=True,
         )
         self.assertEqual(len(decision.timeframes), 4)
+
+
+class TestSyntheticInstrumentGuard(unittest.TestCase):
+    """The engine must refuse broker-synthetic instruments outright rather
+    than producing a confident-looking signal about a price series the user
+    isn't actually trading. See app/instruments.py."""
+
+    def _history(self):
+        return {
+            "H4": make_candles(250, 2000, 3.0, 240),
+            "H1": make_candles(250, 2000, 1.0, 60),
+            "M15": make_candles(250, 2000, 0.4, 15),
+            "M5": make_candles(250, 2000, 0.2, 5),
+        }
+
+    def test_otc_symbol_is_refused(self):
+        from app.instruments import SyntheticInstrumentError
+
+        with self.assertRaises(SyntheticInstrumentError):
+            build_signal("EURUSD-OTC", self._history(), now=datetime.now(timezone.utc))
+
+    def test_real_symbol_still_works(self):
+        decision = build_signal("EURUSD", self._history(), now=datetime.now(timezone.utc))
+        self.assertIn(decision.direction, ("CALL", "PUT", "NO_TRADE"))

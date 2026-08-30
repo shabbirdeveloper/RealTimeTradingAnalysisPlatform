@@ -34,4 +34,6 @@ export const MARKET_LINKS = [
   { label: "XAU/USD", href: "/dashboard/markets/xauusd" },
   { label: "EUR/USD", href: "/dashboard/markets/eurusd" },
   { label: "GBP/USD", href: "/dashboard/markets/gbpusd" },
+  { label: "BTC/USD", href: "/dashboard/markets/btcusd" },
+  { label: "ETH/USD", href: "/dashboard/markets/ethusd" },
 ];

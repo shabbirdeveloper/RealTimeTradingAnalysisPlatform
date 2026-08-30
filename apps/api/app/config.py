@@ -34,7 +34,13 @@ class Settings(BaseSettings):
     # How often the collector polls for new M5 candles, per asset. Kept
     # configurable because it directly trades off against API credit
     # budget -- see apps/api/README.md for the math on your provider plan.
-    poll_interval_seconds: int = Field(default=300, ge=30)
+    #
+    # Default raised from 300s to 600s when the two 24/7 crypto assets were
+    # added: crypto polls around the clock while forex only trades ~17h/day,
+    # so 5 assets at 300s is ~1,198 requests/day -- well over Twelve Data's
+    # 800/day free tier. Break-even is ~450s; 600s leaves headroom for
+    # retries and restarts.
+    poll_interval_seconds: int = Field(default=600, ge=30)
 
     # How many recent M5 bars to request per poll. Larger than the bare
     # minimum on purpose, so a missed poll (network hiccup, restart) still

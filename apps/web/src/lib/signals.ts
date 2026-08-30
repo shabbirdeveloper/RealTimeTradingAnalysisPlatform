@@ -23,11 +23,11 @@ import type {
  * to an honest "not analyzed yet" state instead of fake data.
  */
 export async function getLatestSignals(): Promise<Record<AssetSymbol, Signal | null>> {
-  const result: Record<AssetSymbol, Signal | null> = {
-    XAUUSD: null,
-    EURUSD: null,
-    GBPUSD: null,
-  };
+  // Built from ASSET_LIST rather than written out, so adding an asset can
+  // never silently leave a key missing here.
+  const result = Object.fromEntries(
+    ASSET_LIST.map((asset) => [asset, null])
+  ) as Record<AssetSymbol, Signal | null>;
 
   try {
     const supabase = await createClient();

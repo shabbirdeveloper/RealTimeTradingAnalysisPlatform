@@ -9,6 +9,8 @@ const SLUG_MAP: Record<string, AssetSymbol> = {
   xauusd: "XAUUSD",
   eurusd: "EURUSD",
   gbpusd: "GBPUSD",
+  btcusd: "BTCUSD",
+  ethusd: "ETHUSD",
 };
 
 export function generateStaticParams() {

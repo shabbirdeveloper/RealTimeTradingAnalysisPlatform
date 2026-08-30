@@ -23,6 +23,8 @@ _BASE_PRICE: dict[Asset, Decimal] = {
     Asset.XAUUSD: Decimal("2000.00"),
     Asset.EURUSD: Decimal("1.1000"),
     Asset.GBPUSD: Decimal("1.3000"),
+    Asset.BTCUSD: Decimal("50000.00"),
+    Asset.ETHUSD: Decimal("3000.00"),
 }
 
 # Roughly asset-appropriate per-candle volatility, purely for making the

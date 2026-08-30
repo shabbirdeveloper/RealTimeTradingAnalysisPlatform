@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from app.features import structure as struct
 from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
 from app.features.regime import classify_regime
+from app.instruments import assert_real_market_symbol
 from app.news.blackout import BlackoutConfig, EconomicEvent, evaluate_blackout
 
 EXPIRIES = (15, 30, 60)
@@ -109,6 +110,13 @@ def build_signal(
     `calendar_available=True` genuinely means "nothing is scheduled".
     Collapsing them would make an unprotected system look protected.
     """
+    # Refuse broker-synthetic/OTC instruments outright. See app/instruments.py:
+    # analysing real market data and trading a broker-generated series are
+    # unrelated activities, and the result would still render as a confident
+    # graded signal. Raising here (rather than returning NO_TRADE) makes it a
+    # loud configuration error instead of a quiet, plausible-looking one.
+    assert_real_market_symbol(asset)
+
     now = now or datetime.now(timezone.utc)
     session = struct.session_for_time(now)
 

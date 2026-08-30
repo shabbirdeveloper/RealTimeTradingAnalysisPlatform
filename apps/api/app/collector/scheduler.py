@@ -13,7 +13,7 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.collector.market_hours import is_market_open
+from app.collector.market_hours import any_market_open, is_market_open
 from app.collector.resolution import resolve_expired_signals
 from app.collector.service import run_poll_cycle
 from app.config import get_settings
@@ -49,8 +49,8 @@ async def run_all_assets(*, force: bool = False) -> None:
     API-credit budget.
     """
     settings = get_settings()
-    if not force and not is_market_open():
-        logger.info("market closed (weekend) -- skipping poll cycle")
+    if not force and not any_market_open():
+        logger.info("all markets closed -- skipping poll cycle")
         return
     if not settings.has_supabase:
         logger.warning("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set -- skipping poll cycle")
@@ -58,6 +58,13 @@ async def run_all_assets(*, force: bool = False) -> None:
 
     provider = build_provider()
     for asset in Asset:
+        # Per-asset, not per-cycle: crypto trades through the weekend while
+        # forex/gold are shut. A single global check would either blind the
+        # crypto pairs on Saturday or burn API credits re-fetching identical
+        # closed-market forex candles.
+        if not force and not is_market_open(asset):
+            logger.debug("%s market closed -- skipping", asset.value)
+            continue
         await run_poll_cycle(asset, provider, poll_outputsize=settings.poll_outputsize)
 
     # Signal resolution (spec section 49) -- checks real candles against

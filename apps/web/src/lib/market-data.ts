@@ -85,11 +85,11 @@ async function fetchSnapshotForAssetId(
 export async function getAssetPriceSnapshots(): Promise<
   Record<AssetSymbol, AssetPriceSnapshot | null>
 > {
-  const result: Record<AssetSymbol, AssetPriceSnapshot | null> = {
-    XAUUSD: null,
-    EURUSD: null,
-    GBPUSD: null,
-  };
+  // Built from ASSET_LIST rather than written out, so adding an asset can
+  // never silently leave a key missing here.
+  const result = Object.fromEntries(
+    ASSET_LIST.map((asset) => [asset, null])
+  ) as Record<AssetSymbol, AssetPriceSnapshot | null>;
 
   try {
     const supabase = await createClient();

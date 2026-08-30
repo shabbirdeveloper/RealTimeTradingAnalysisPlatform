@@ -6,6 +6,7 @@ import { PERFORMANCE_SUMMARY } from "@/data/history";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshots } from "@/lib/market-data";
 import { getLatestSignals } from "@/lib/signals";
+import { OtcWarning } from "@/components/shared/otc-warning";
 import type { AssetSymbol, Signal } from "@/types";
 import { Award, TrendingUp, Target, AlertTriangle } from "lucide-react";
 
@@ -44,6 +45,8 @@ export default async function DashboardHomePage() {
         </span>
       </div>
 
+      <OtcWarning />
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatTile
           index={0}
@@ -69,7 +72,7 @@ export default async function DashboardHomePage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         {ASSET_LIST.map((asset, i) => {
           const snapshot = snapshots[asset];
           if (!snapshot) return <NoDataCard key={asset} asset={asset} index={i} />;

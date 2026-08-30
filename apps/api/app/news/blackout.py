@@ -36,6 +36,13 @@ ASSET_CURRENCIES: dict[str, frozenset[str]] = {
     "XAUUSD": frozenset({"USD"}),
     "EURUSD": frozenset({"EUR", "USD"}),
     "GBPUSD": frozenset({"GBP", "USD"}),
+    # Crypto is quoted in USD and does react to US macro (rates, CPI),
+    # so USD releases are treated as relevant. It is NOT driven by
+    # currency fundamentals the way an FX pair is, so this is a
+    # conservative "pause around big USD prints" rather than a claim that
+    # crypto behaves like a dollar pair.
+    "BTCUSD": frozenset({"USD"}),
+    "ETHUSD": frozenset({"USD"}),
 }
 
 # Impact levels that trigger a blackout at all. MEDIUM/LOW events are

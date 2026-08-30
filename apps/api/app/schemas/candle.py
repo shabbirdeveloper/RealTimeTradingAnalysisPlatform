@@ -17,6 +17,20 @@ class Asset(str, Enum):
     XAUUSD = "XAUUSD"
     EURUSD = "EURUSD"
     GBPUSD = "GBPUSD"
+    # Crypto: the only genuinely 24/7 REAL markets available here. Added so
+    # the platform has honest weekend coverage without resorting to a
+    # broker's synthetic "OTC" weekend instruments -- see app/instruments.py
+    # for why those are refused outright.
+    BTCUSD = "BTCUSD"
+    ETHUSD = "ETHUSD"
+
+
+def is_crypto(asset: Asset) -> bool:
+    """Convenience wrapper. The set itself lives in app.instruments so the
+    market-hours logic can use it without pulling in pydantic."""
+    from app.instruments import is_crypto_symbol
+
+    return is_crypto_symbol(asset.value)
 
 
 class Timeframe(str, Enum):

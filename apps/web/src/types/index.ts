@@ -1,7 +1,7 @@
 // Core domain types for the NorthFXTrade signal platform.
 // These mirror the signal engine output contract defined in the project spec.
 
-export type AssetSymbol = "XAUUSD" | "EURUSD" | "GBPUSD";
+export type AssetSymbol = "XAUUSD" | "EURUSD" | "GBPUSD" | "BTCUSD" | "ETHUSD";
 
 export type Direction = "CALL" | "PUT" | "NO_TRADE";
 
