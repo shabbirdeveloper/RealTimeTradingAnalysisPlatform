@@ -11,7 +11,7 @@ Tracking against the 10 phases defined in the project spec.
 | 5 | Backtesting engine, result calculation, analytics | **Real.** Signal resolution (`app/collector/resolution.py`, spec section 49) marks signals WON/LOST/DRAW at expiry against the real closing price. The historical backtester (`app/backtesting/`, spec section 13) replays the real signal engine over stored candles with an enforced no-look-ahead guarantee, and `/admin/backtesting` reads real runs. Both are honestly limited by how much real candle history exists — see "Backtesting engine" below. |
 | 6 | ML pipeline, independent models, meta model, probability calibration | Not started. UI already distinguishes `MODEL_NOT_READY` from a calibrated confidence, per spec section 10 |
 | 7 | News filter, economic calendar | **Blackout logic is real and tested** (`apps/api/app/news/`) — pre-news pause, NEWS_MODE, post-event stabilization, configurable windows, asset↔currency relevance, wired into the signal engine. `/dashboard/calendar` and `/admin/news` read the real `economic_events` table. **No calendar data provider is connected yet** — that needs a provider choice and is the one remaining piece; the system says so loudly rather than implying it's protected. See "News filter" below. |
-| 8 | Browser/Telegram notifications, PWA | Notification preferences UI built; manifest wired; service worker and real push delivery not implemented |
+| 8 | Browser/Telegram notifications, PWA | **Mostly real.** Preferences now load/save against Supabase; service worker with app-shell-only caching + offline page; install prompt; browser alerts fire on new qualifying signals **while the app is open**. Background push (app closed) needs a push server, and Telegram needs a bot token — both explicitly stated in the UI rather than implied. See "PWA + notifications" below. |
 | 9 | Admin model tools, backtesting comparison, system monitoring | Frontend shells built with demo data; no real backend behind them |
 | 10 | Subscription/billing architecture | Frontend billing UI only; no payment provider integration |
 
@@ -97,6 +97,65 @@ the tradeoffs and a safe default (360s). Now that the pipeline is
 verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
+
+## PWA + notifications (Phase 8)
+
+For manual binary trading, alert latency effectively *is* the product — a
+15-minute expiry seen 20 minutes late is worthless. So this phase matters
+more here than in a typical app.
+
+**What's real:**
+- **Preferences actually persist.** `/dashboard/notifications` was
+  `useState`-only; it now loads and saves `notification_preferences`
+  through `lib/notification-preferences.ts`, auto-saving on toggle with
+  visible saving/saved/error states. RLS scopes every row to its owner, so
+  this runs safely from the browser with the anon key.
+- **Service worker** (`public/sw.js`) built around one rule from spec
+  section 27: **cache the app shell, never trading data.** A cached price
+  is worse than no price — a trader glancing at an offline dashboard
+  showing yesterday's gold quote could place a real trade on it. So every
+  navigation and data request is network-first, Supabase and `/api/*` are
+  never cached at all, and offline shows an explicit page stating that no
+  prices are displayed *on purpose*. Only content-hashed build assets are
+  cache-first, where staleness is meaningless.
+- **Install prompt** (`components/shared/pwa-provider.tsx`), dismissal
+  remembered in localStorage. SW registers in production only — in dev it
+  would cache assets that change on every edit.
+- **Browser alerts** fire on new qualifying signals, de-duplicated by
+  signal id so re-renders and multiple open tabs can't double-notify.
+
+**The honest scope limit, stated in the UI itself:** these use the
+Notification API directly, so they fire only while NorthFXTrade is
+actually open — a background tab or the installed window both count, a
+fully closed app does not. True background delivery needs Web Push (VAPID
+keypair, stored push subscriptions, a server that sends them). The
+settings page says this plainly rather than implying alerts arrive when
+they can't, and `sw.js` deliberately has **no** `push` handler — adding
+one with no server to trigger it would be a handler that can never fire.
+
+**A gap this surfaced and closed:** with only A++/A+ toggles the whole
+feature would have been dead code, because the engine caps grades at B
+until a calibrated ML model exists (spec section 10) — no alert could
+ever have fired. Migration `20260830000012` adds a `bgrade_enabled`
+column, **defaulting to false**: opt-in, because a B is explicitly not a
+high-conviction setup and alerting on it by default would train the user
+to ignore alerts. The toggle's own description says it is currently the
+only grade the engine can produce.
+
+The same migration adds `btcusd_enabled` / `ethusd_enabled` — adding
+crypto had left the per-asset toggles missing exactly the two assets that
+trade at the weekend, when a trader is most likely to be away from the
+screen.
+
+**Still not built (Phase 8 remainder):** Web Push background delivery,
+Telegram delivery (needs a bot token from the user), and email delivery.
+The `notifications` table exists but nothing writes to it yet — an
+in-app notification feed is a natural next step and needs no external
+dependency.
+
+Verified: `tsc --noEmit` and `next lint` clean, `node --check` on the
+service worker, 115 Python tests still passing (unchanged — this phase is
+frontend-only).
 
 ## 24/7 coverage: crypto assets + the OTC guard
 
@@ -563,10 +622,11 @@ as above.
    `apps/api/.env` first, or the backtest endpoints will refuse to run
    (by design — they fail closed).
 2. Run migrations `20260830000010_economic_events_unique.sql` (calendar
-   natural key) and `20260830000011_seed_crypto_assets.sql` (BTC/USD and
-   ETH/USD) in the Supabase SQL editor. Also set
-   `POLL_INTERVAL_SECONDS=600` in `apps/api/.env` — at the old 300s, five
-   assets exceed the Twelve Data free tier.
+   natural key), `20260830000011_seed_crypto_assets.sql` (BTC/USD and
+   ETH/USD) and `20260830000012_notification_prefs_crypto.sql` (crypto +
+   B-grade alert toggles) in the Supabase SQL editor. `apps/api/.env`
+   already has `POLL_INTERVAL_SECONDS=600` and a generated
+   `ADMIN_API_KEY`.
    Then trigger one poll cycle (`POST /debug/poll-now`, or wait for the
    scheduler) and confirm real rows appear in Supabase's
    `market_features` and `signals` tables — the same "verify it actually

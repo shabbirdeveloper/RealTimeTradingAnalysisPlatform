@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline — NorthFXTrade</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        background: #0a0e14; color: #e6edf3; padding: 24px;
+        font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .card {
+        max-width: 460px; border: 1px solid #1e2733; border-radius: 12px;
+        background: #0e141c; padding: 28px;
+      }
+      h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+      p { margin: 0 0 14px; color: #97a3b6; font-size: 14px; }
+      .warn {
+        margin-top: 18px; padding: 12px 14px; border-radius: 8px;
+        border: 1px solid rgba(217, 119, 6, .35); background: rgba(217, 119, 6, .12);
+        color: #fbbf24; font-size: 13px;
+      }
+      button {
+        margin-top: 18px; width: 100%; padding: 10px 14px; border-radius: 8px;
+        border: 1px solid #22c55e40; background: #22c55e1a; color: #4ade80;
+        font: inherit; font-weight: 600; cursor: pointer;
+      }
+      button:hover { background: #22c55e2a; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>You're offline</h1>
+      <p>NorthFXTrade can't reach the network, so it has no current market data.</p>
+      <div class="warn">
+        <strong>No prices or signals are shown on purpose.</strong> Cached market data would be stale, and a stale
+        price is more dangerous than no price — never trade from a screen that can't confirm it is live.
+      </div>
+      <button onclick="location.reload()">Try again</button>
+    </div>
+  </body>
+</html>

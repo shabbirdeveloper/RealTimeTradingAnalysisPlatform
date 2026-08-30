@@ -1,13 +1,28 @@
 {
   "name": "NorthFXTrade",
   "short_name": "NorthFXTrade",
-  "description": "Algorithmic market analysis and informational trading signals for XAU/USD, EUR/USD and GBP/USD. Manual execution only.",
+  "description": "Algorithmic market analysis and informational trading signals for XAU/USD, EUR/USD, GBP/USD, BTC/USD and ETH/USD. Manual execution only.",
   "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0a0e14",
   "theme_color": "#0a0e14",
   "icons": [
-    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Live Signals",
+      "url": "/dashboard/signals"
+    },
+    {
+      "name": "Dashboard",
+      "url": "/dashboard"
+    }
   ]
 }

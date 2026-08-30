@@ -5,6 +5,7 @@ import { LiveSignalCard } from "@/components/dashboard/live-signal-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AssetSymbol, Signal } from "@/types";
+import { SignalAlerts } from "@/components/dashboard/signal-alerts";
 
 /**
  * Client wrapper around the real signals fetched server-side (see
@@ -27,13 +28,16 @@ export function LiveSignalsGrid({ signals }: { signals: Record<AssetSymbol, Sign
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-      {ASSET_LIST.map((asset, i) => {
-        const signal = signals[asset];
-        if (!signal) return <NoSignalCard key={asset} asset={asset} index={i} />;
-        return <LiveSignalCard key={asset} signal={signal} now={now} index={i} />;
-      })}
-    </div>
+    <>
+      <SignalAlerts signals={signals} />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {ASSET_LIST.map((asset, i) => {
+          const signal = signals[asset];
+          if (!signal) return <NoSignalCard key={asset} asset={asset} index={i} />;
+          return <LiveSignalCard key={asset} signal={signal} now={now} index={i} />;
+        })}
+      </div>
+    </>
   );
 }
 
