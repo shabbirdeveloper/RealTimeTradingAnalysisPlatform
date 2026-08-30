@@ -3,6 +3,10 @@ node_modules
 out
 .env
 .env.local
+# Catch .env.backup / .env.bak / .env.production etc. -- a bare `.env`
+# rule does not cover them, and a stray copy leaks real keys.
+.env.*
+!.env.example
 *.log
 .DS_Store
 *.tsbuildinfo

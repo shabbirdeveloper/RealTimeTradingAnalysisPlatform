@@ -3,4 +3,9 @@ venv/
 __pycache__/
 *.pyc
 .env
+# Belt-and-braces: catch .env.local, .env.backup, .env.bak etc. A bare
+# `.env` rule does NOT cover them, and a stray copy of this file holds the
+# Supabase service-role key and the market-data API key in plain text.
+.env.*
+!.env.example
 .pytest_cache/
