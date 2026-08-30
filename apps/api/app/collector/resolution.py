@@ -21,6 +21,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.schemas.candle import Asset, Timeframe
+from app.storage import audit_repository as audit
 from app.storage.candle_repository import _asset_id_map, fetch_first_candle_at_or_after
 from app.storage.supabase_client import get_service_client
 
@@ -95,4 +96,9 @@ def resolve_expired_signals() -> int:
 
     if resolved_count:
         logger.info("resolved %d expired signal(s)", resolved_count)
+        audit.record(
+            audit.ACTION_SIGNALS_RESOLVED,
+            target_table="signals",
+            metadata={"resolved": resolved_count},
+        )
     return resolved_count

@@ -11,6 +11,7 @@ from datetime import datetime, time, timezone
 from app.backtesting.engine import run_backtest
 from app.backtesting.repository import load_history, mark_failed, mark_running, save_results
 from app.schemas.candle import Asset
+from app.storage import audit_repository as audit
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,26 @@ def execute_backtest(
             backtest_id, summary.total_opportunities, summary.accepted_signals,
             summary.wins, summary.losses,
         )
+        audit.record(
+            audit.ACTION_BACKTEST_COMPLETED,
+            target_table="backtests",
+            target_id=backtest_id,
+            metadata={
+                "opportunities": summary.total_opportunities,
+                "accepted": summary.accepted_signals,
+                "wins": summary.wins,
+                "losses": summary.losses,
+                "win_rate": summary.win_rate,
+            },
+        )
     except Exception as exc:  # noqa: BLE001 -- must always land as a FAILED row
         logger.exception("backtest %s failed", backtest_id)
+        audit.record(
+            audit.ACTION_BACKTEST_FAILED,
+            target_table="backtests",
+            target_id=backtest_id,
+            metadata={"error": str(exc)},
+        )
         try:
             mark_failed(backtest_id, str(exc))
         except Exception:  # noqa: BLE001

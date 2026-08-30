@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.backtesting.runner import execute_backtest
 from app.config import get_settings
 from app.schemas.candle import Asset
+from app.storage import audit_repository as audit
 from app.storage.candle_repository import _asset_id_map
 from app.storage.supabase_client import get_service_client
 
@@ -109,6 +110,23 @@ def create_backtest(
     if not rows:
         raise HTTPException(status_code=500, detail="Could not create the backtest row")
     backtest_id = rows[0]["id"]
+
+    audit.record(
+        audit.ACTION_BACKTEST_CREATED,
+        target_table="backtests",
+        target_id=backtest_id,
+        metadata={
+            "assets": [a.value for a in assets],
+            "start_date": request.start_date.isoformat(),
+            "end_date": request.end_date.isoformat(),
+            "min_technical_score": request.min_technical_score,
+            "expiry_minutes": request.expiry_minutes,
+            # actor_user_id stays null: this service authenticates with a
+            # shared admin secret, not a user session, so there is no
+            # verified user identity to attribute the action to. Recording a
+            # guess would be worse than recording nothing.
+        },
+    )
 
     background_tasks.add_task(
         execute_backtest,

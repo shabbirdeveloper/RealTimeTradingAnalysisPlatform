@@ -141,3 +141,106 @@ export async function getRejectedOpportunities(limit = 100): Promise<RejectedOpp
     return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// Audit logs (spec section 38) and user list
+// ---------------------------------------------------------------------------
+
+export interface AuditLogRow {
+  id: number;
+  actorUserId: string | null;
+  actorLabel: string;
+  action: string;
+  targetTable: string | null;
+  targetId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+/**
+ * Real audit log entries. Written by apps/api (see
+ * app/storage/audit_repository.py) for operational and administrative
+ * events -- backtest runs, market-data failures, resolution batches.
+ * Deliberately NOT a log of every signal: those are already rows in
+ * `signals`, and duplicating them would bury what an operator needs to see.
+ * Admin-only via RLS.
+ */
+export async function getAuditLogs(limit = 200): Promise<AuditLogRow[]> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("id, actor_user_id, action, target_table, target_id, metadata, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return (data as Array<{
+      id: number; actor_user_id: string | null; action: string;
+      target_table: string | null; target_id: string | null;
+      metadata: Record<string, unknown> | null; created_at: string;
+    }>).map((r) => ({
+      id: r.id,
+      actorUserId: r.actor_user_id,
+      // The API service authenticates with a shared admin secret rather than
+      // a user session, so most entries genuinely have no attributable user.
+      actorLabel: r.actor_user_id ? "User" : "System",
+      action: r.action,
+      targetTable: r.target_table,
+      targetId: r.target_id,
+      metadata: r.metadata ?? {},
+      createdAt: r.created_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  role: "user" | "admin";
+  plan: string;
+  subscriptionStatus: string | null;
+  createdAt: string;
+}
+
+export type AdminUsersResult =
+  | { ok: true; users: AdminUserRow[] }
+  | { ok: false; error: string };
+
+/**
+ * Real user list via the `admin_list_users()` security-definer function
+ * (migration 20260830000013). Emails live in `auth.users`, which the
+ * browser client cannot read directly -- that function is the one hardened
+ * hole, and it raises for non-admins rather than trusting the caller.
+ *
+ * Returns an error rather than an empty array so the page can distinguish
+ * "no users" from "the function isn't installed / you aren't an admin".
+ */
+export async function getAdminUsers(): Promise<AdminUsersResult> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("admin_list_users");
+    if (error) return { ok: false, error: error.message };
+    const users = (data ?? []) as Array<{
+      id: string; email: string | null; display_name: string | null;
+      role: "user" | "admin"; plan: string; subscription_status: string | null;
+      created_at: string;
+    }>;
+    return {
+      ok: true,
+      users: users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        displayName: u.display_name,
+        role: u.role,
+        plan: u.plan,
+        subscriptionStatus: u.subscription_status,
+        createdAt: u.created_at,
+      })),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Could not load users." };
+  }
+}

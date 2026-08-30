@@ -21,6 +21,7 @@ from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
 from app.news.factory import build_calendar_provider
 from app.schemas.candle import Asset, Candle, Timeframe
+from app.storage import audit_repository as audit
 from app.storage.candle_repository import fetch_recent_candles, upsert_candles
 from app.storage.event_repository import fetch_events_near
 from app.storage.feature_repository import upsert_features
@@ -74,6 +75,12 @@ async def run_poll_cycle(
     except MarketDataError as exc:
         logger.warning("market data fetch failed for %s via %s: %s", asset.value, provider.name, exc)
         report_component_health(component, status="Warning", details={"provider": provider.name, "error": str(exc)})
+        audit.record(
+            audit.ACTION_MARKET_DATA_FAILED,
+            target_table="candles",
+            target_id=asset.value,
+            metadata={"provider": provider.name, "error": str(exc)},
+        )
         return
 
     if not fresh_m5:
@@ -150,5 +157,11 @@ def _run_analysis_cycle(asset: Asset) -> None:
             calendar_available=calendar_available,
         )
         insert_signal(asset, decision)
-    except Exception:  # noqa: BLE001 -- deliberately broad, see docstring
+    except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
         logger.exception("analysis cycle failed for %s", asset.value)
+        audit.record(
+            audit.ACTION_ANALYSIS_FAILED,
+            target_table="signals",
+            target_id=asset.value,
+            metadata={"error": str(exc)},
+        )

@@ -12,7 +12,7 @@ Tracking against the 10 phases defined in the project spec.
 | 6 | ML pipeline, independent models, meta model, probability calibration | Not started. UI already distinguishes `MODEL_NOT_READY` from a calibrated confidence, per spec section 10 |
 | 7 | News filter, economic calendar | **Blackout logic is real and tested** (`apps/api/app/news/`) — pre-news pause, NEWS_MODE, post-event stabilization, configurable windows, asset↔currency relevance, wired into the signal engine. `/dashboard/calendar` and `/admin/news` read the real `economic_events` table. **No calendar data provider is connected yet** — that needs a provider choice and is the one remaining piece; the system says so loudly rather than implying it's protected. See "News filter" below. |
 | 8 | Browser/Telegram notifications, PWA | **Mostly real.** Preferences now load/save against Supabase; service worker with app-shell-only caching + offline page; install prompt; browser alerts fire on new qualifying signals **while the app is open**. Background push (app closed) needs a push server, and Telegram needs a bot token — both explicitly stated in the UI rather than implied. See "PWA + notifications" below. |
-| 9 | Admin model tools, backtesting comparison, system monitoring | Frontend shells built with demo data; no real backend behind them |
+| 9 | Admin model tools, backtesting comparison, system monitoring | **Mostly real.** `/admin/signals`, `/admin/market-data`, `/admin/system`, `/admin/backtesting`, `/admin/users` and `/admin/logs` all read real data, and audit logging now actually writes (spec section 38). `/admin/models` and `/admin/backtesting/compare` remain demo — both need trained ML models (Phase 6). |
 | 10 | Subscription/billing architecture | Frontend billing UI only; no payment provider integration |
 
 ## Database schema (confirmed applied)
@@ -97,6 +97,61 @@ the tradeoffs and a safe default (360s). Now that the pipeline is
 verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
+
+## Audit logging + admin users/logs
+
+Closes a stated security gap and two of the last demo pages.
+
+**Audit logging (spec section 38).** `audit_logs` existed as a table with
+nothing writing to it. `app/storage/audit_repository.py` now records the
+events an operator actually needs: backtest created/completed/failed,
+market-data fetch failures, analysis-cycle failures, and signal-resolution
+batches.
+
+Two deliberate scoping calls:
+- **Individual signals are not audited.** They are already first-class
+  rows in `signals` — including the rejected ones — and echoing them into
+  the audit log would bury the operational events it exists to surface.
+- **Every write is best-effort and swallows its own errors.** A collector
+  that dies because it couldn't write a log line is strictly worse than
+  one that keeps collecting with a gap in the log.
+
+`actor_user_id` is null on nearly everything, and that is honest rather
+than lazy: this service authenticates with a shared admin secret, not a
+user session, so there is no verified identity to attribute an action to.
+Recording a guess would be worse than recording nothing. The UI labels
+those entries "System".
+
+**`/admin/users` and the security-definer function.** Emails live in
+`auth.users`, which the browser's anon key cannot read — by design. The
+alternative to a hardened function would have been shipping the
+service-role key to the frontend, which would hand the browser
+unrestricted access to every table. Instead, migration
+`20260830000013` adds one read-only `admin_list_users()` function:
+- `SECURITY DEFINER` with a **pinned `search_path`**, so a caller cannot
+  shadow `profiles` or `auth.users` with their own objects and redirect
+  the query.
+- The **admin check lives inside the function body and raises** (42501).
+  Trusting the caller to check first would let any authenticated user
+  invoke it over PostgREST and read every email.
+- `EXECUTE` revoked from `public`/`anon`, granted only to
+  `authenticated`. Read-only: it exposes no path to change a role or plan.
+- Every table reference is schema-qualified *and* the `is_admin()` call is
+  qualified — two independent barriers, so the protection survives someone
+  later relaxing the `search_path` line.
+
+The page is deliberately read-only. A role change is a privilege-escalation
+path and deserves a deliberate, audited action rather than an inline
+toggle; plans stay read-only until a payment provider exists.
+
+**`/admin/logs`** renders the real entries with human labels, failure
+actions highlighted, and an honest empty state explaining that entries
+appear as the service runs.
+
+Verified: 115 Python tests passing, `tsc --noEmit` and `next lint` clean,
+plus a scripted check of the migration asserting the admin check is
+present and qualified, `search_path` is pinned, `anon` is revoked,
+`authenticated` is granted, and the function contains no write statements.
 
 ## PWA + notifications (Phase 8)
 
@@ -621,12 +676,11 @@ as above.
    signal engine and backtesting code. Set `ADMIN_API_KEY` in
    `apps/api/.env` first, or the backtest endpoints will refuse to run
    (by design — they fail closed).
-2. Run migrations `20260830000010_economic_events_unique.sql` (calendar
-   natural key), `20260830000011_seed_crypto_assets.sql` (BTC/USD and
-   ETH/USD) and `20260830000012_notification_prefs_crypto.sql` (crypto +
-   B-grade alert toggles) in the Supabase SQL editor. `apps/api/.env`
-   already has `POLL_INTERVAL_SECONDS=600` and a generated
-   `ADMIN_API_KEY`.
+2. Run migrations `20260830000010` (calendar natural key), `20260830000011`
+   (BTC/USD + ETH/USD), `20260830000012` (crypto + B-grade alert toggles)
+   and `20260830000013` (admin user-listing function) in the Supabase SQL
+   editor. `apps/api/.env` already has `POLL_INTERVAL_SECONDS=600` and a
+   generated `ADMIN_API_KEY`.
    Then trigger one poll cycle (`POST /debug/poll-now`, or wait for the
    scheduler) and confirm real rows appear in Supabase's
    `market_features` and `signals` tables — the same "verify it actually
