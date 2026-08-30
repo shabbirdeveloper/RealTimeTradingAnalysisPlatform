@@ -1,5 +1,6 @@
 "use client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AccuracyVerdict } from "@/components/dashboard/accuracy-verdict";
 import { formatPercent } from "@/lib/utils";
 import type { PerformanceSummary } from "@/types";
 import { Award, Target, TrendingUp, TrendingDown, Flame, Snowflake } from "lucide-react";
@@ -28,6 +29,8 @@ export function PerformanceCharts({ summary: p }: { summary: PerformanceSummary 
         <Kpi icon={Award} label="A++ accuracy" value={formatPercent(p.aPlusPlusAccuracy)} tone="gold" sub={`${p.aPlusPlusSignals} signals`} />
         <Kpi icon={p.currentStreak.type === "LOSS" ? Snowflake : Flame} label="Current streak" value={`${p.currentStreak.count} ${p.currentStreak.type}`} />
       </div>
+
+      <AccuracyVerdict wins={p.wins} losses={p.losses} />
 
       {p.totalSignals === 0 && (
         <p className="rounded-lg border border-dashed border-border bg-secondary/20 p-3.5 text-sm text-muted-foreground">

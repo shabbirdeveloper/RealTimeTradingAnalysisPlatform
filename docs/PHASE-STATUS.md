@@ -98,6 +98,77 @@ verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
 
+## How signal accuracy actually gets tested
+
+Two mechanisms exist, and the second matters more than the first.
+
+**1. Forward testing — already running, and the real evidence.** Every
+signal the engine emits is resolved against the real closing price at
+expiry (`app/collector/resolution.py`). That is by construction *unseen*
+data: the decision was made before the outcome existed. No backtest can
+match that quality of evidence. It costs nothing but time.
+
+**2. Backtesting — a smoke test of the rules, not proof.** `POST
+/admin/backtests` replays the engine over stored history with the
+no-look-ahead guarantee. Useful for sanity-checking the rules and sweeping
+thresholds; not evidence of accuracy, especially over the thin history
+currently stored. And sweeping thresholds and keeping the best result is
+how a backtest starts lying — any threshold chosen that way must then be
+confirmed forward.
+
+**What the measured number leaves out.** The engine measures *direction*.
+It does not model spread, the delay between the signal appearing and the
+user clicking, or the broker's exact settlement price. Real results run
+somewhat worse than measured.
+
+### The bar, quantified
+
+A bare win-rate percentage is the most misleading number this platform
+could display, for two reasons now surfaced in the UI
+(`lib/statistics.ts` + `components/dashboard/accuracy-verdict.tsx`):
+
+**Sample size.** 95% Wilson intervals for an observed 60%:
+
+| resolved signals | plausible true rate |
+|---:|---|
+| 20 | 38.7% – 78.1% |
+| 50 | 46.2% – 72.4% |
+| 100 | 50.2% – 69.1% |
+| 500 | 55.6% – 64.2% |
+| 1000 | 56.9% – 63.0% |
+
+**Break-even.** A binary win pays less than it risks, so the bar is not
+50%:
+
+| payout | break-even win rate |
+|---:|---:|
+| 70% | 58.8% |
+| 80% | 55.6% |
+| 90% | 52.6% |
+
+Combining the two is sobering, and is the single most useful thing this
+analysis produced: **sustaining 60% against an 80% payout needs roughly
+490 resolved signals** before the interval's lower bound clears
+break-even. At 65% it's ~110; at 70%, ~50. A 60% win rate is nowhere near
+as good as it sounds, and until several hundred signals have resolved it
+is not distinguishable from losing money.
+
+For spec section 15's own example — a claimed 90% A++ accuracy — 50
+signals gives 78.6%–95.7%, while 410 gives 86.7%–92.5%. The spec's
+instinct that a few hundred signals is the right order of magnitude for an
+A++ claim holds up.
+
+### What the UI now does
+`/dashboard/performance` shows the interval, not just the point estimate;
+a user-set broker payout (stored locally — it is broker- and
+asset-specific and changes the verdict entirely); a break-even marker on
+a visual range bar; a plain-language verdict distinguishing *below
+break-even* / *not yet distinguishable* / *above break-even*; and, when
+not yet proven, how many resolved signals it would take.
+
+The Wilson implementation was verified against an independent Python
+implementation across ten cases plus edge cases (0/0, 0/n, n/n).
+
 ## Audit logging + admin users/logs
 
 Closes a stated security gap and two of the last demo pages.
