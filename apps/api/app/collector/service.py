@@ -19,8 +19,10 @@ from app.aggregation import aggregate_candles
 from app.features.signal_engine import build_signal
 from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
+from app.news.factory import build_calendar_provider
 from app.schemas.candle import Asset, Candle, Timeframe
 from app.storage.candle_repository import fetch_recent_candles, upsert_candles
+from app.storage.event_repository import fetch_events_near
 from app.storage.feature_repository import upsert_features
 from app.storage.health_repository import report_component_health
 from app.storage.signal_repository import insert_signal
@@ -117,9 +119,10 @@ async def run_poll_cycle(
 
 def _run_analysis_cycle(asset: Asset) -> None:
     """Real technical analysis + signal decision from real stored candle
-    history (spec sections 6-12). Failures here are logged and swallowed
-    -- a feature/signal computation problem should never take down candle
-    collection, which is the more critical half of this poll cycle.
+    history (spec sections 6-12), with the news filter applied (section 8).
+    Failures here are logged and swallowed -- a feature/signal computation
+    problem should never take down candle collection, which is the more
+    critical half of this poll cycle.
     """
     try:
         candles_by_timeframe: dict[str, list[dict]] = {}
@@ -130,7 +133,22 @@ def _run_analysis_cycle(asset: Asset) -> None:
             if feature_candles:
                 upsert_features(asset, tf, feature_candles[-1]["open_time"], compute_feature_dict(feature_candles))
 
-        decision = build_signal(asset.value, candles_by_timeframe, now=datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+
+        # News protection. `calendar_available` tracks whether a real feed
+        # is configured -- an empty event list from an unconfigured
+        # provider must NOT be read as "nothing scheduled, all clear".
+        calendar_provider = build_calendar_provider()
+        calendar_available = calendar_provider.is_configured
+        events = fetch_events_near(now) if calendar_available else []
+
+        decision = build_signal(
+            asset.value,
+            candles_by_timeframe,
+            now=now,
+            economic_events=events,
+            calendar_available=calendar_available,
+        )
         insert_signal(asset, decision)
     except Exception:  # noqa: BLE001 -- deliberately broad, see docstring
         logger.exception("analysis cycle failed for %s", asset.value)

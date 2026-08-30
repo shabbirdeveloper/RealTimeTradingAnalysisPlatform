@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from app.features import structure as struct
 from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
 from app.features.regime import classify_regime
+from app.news.blackout import BlackoutConfig, EconomicEvent, evaluate_blackout
 
 EXPIRIES = (15, 30, 60)
 TECHNICAL_SCORE_TAKE_THRESHOLD = 78  # matches apps/web's gradeFromConfidence() B cutoff
@@ -90,12 +91,24 @@ def build_signal(
     now: datetime | None = None,
     *,
     technical_score_threshold: int = TECHNICAL_SCORE_TAKE_THRESHOLD,
+    economic_events: list[EconomicEvent] | None = None,
+    calendar_available: bool = False,
+    blackout_config: BlackoutConfig | None = None,
 ) -> SignalDecision:
     """`technical_score_threshold` exists so the backtester can sweep it
     (spec section 32's "minimum confidence" input) without duplicating any
     of this logic. Live callers should leave it at the default -- a
     threshold that only holds up in a backtest is exactly the kind of
-    curve-fit this project is supposed to catch, not ship."""
+    curve-fit this project is supposed to catch, not ship.
+
+    News protection (spec section 8): pass `economic_events` plus
+    `calendar_available=True` when a real calendar feed is configured. The
+    two are separate on purpose -- an empty event list with
+    `calendar_available=False` means "we have no calendar", which must
+    keep warning that news is unscreened, while an empty list with
+    `calendar_available=True` genuinely means "nothing is scheduled".
+    Collapsing them would make an unprotected system look protected.
+    """
     now = now or datetime.now(timezone.utc)
     session = struct.session_for_time(now)
 
@@ -117,8 +130,28 @@ def build_signal(
     reasons: list[str] = []
     warnings: list[str] = [
         "Meta trade/no-trade model not available yet (Phase 6) — this decision is technical-score-only.",
-        "Economic calendar filter not active yet (Phase 7) — high-impact news is not being screened automatically.",
     ]
+
+    blackout = evaluate_blackout(economic_events or [], asset, now, blackout_config)
+    if not calendar_available:
+        warnings.append(
+            "No economic calendar feed is configured — high-impact news is NOT being screened. "
+            "Check the calendar yourself before trading."
+        )
+
+    if blackout.active:
+        # A news blackout overrides everything: spec section 8 pauses signal
+        # generation outright rather than scoring through it.
+        warnings.append(blackout.reason or "High-impact news window active — signal generation paused.")
+        return SignalDecision(
+            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
+            market_regime="NEWS_MODE", regime_reason=blackout.reason or "High-impact news window.",
+            entry_price=entry_price, session=session,
+            reasons=["Signal generation paused around a high-impact news release."],
+            # Timeframes are still reported: during a pause the trader can
+            # see what the market looks like, they just get no signal.
+            warnings=warnings, timeframes=timeframes, candidates=[], generated_at=now,
+        )
 
     insufficient = [t.timeframe for t in timeframes if t.insufficient_data]
     if insufficient:

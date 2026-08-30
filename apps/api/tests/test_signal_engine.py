@@ -85,3 +85,79 @@ class TestBuildSignal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNewsProtection(unittest.TestCase):
+    """Spec section 8: a high-impact news window pauses signals outright."""
+
+    def _trending_history(self):
+        return {
+            "H4": make_candles(250, 2000, 3.0, 240),
+            "H1": make_candles(250, 2000, 1.0, 60),
+            "M15": make_candles(250, 2000, 0.4, 15),
+            "M5": make_candles(250, 2000, 0.2, 5),
+        }
+
+    def test_warns_loudly_when_no_calendar_is_configured(self):
+        decision = build_signal("XAUUSD", self._trending_history(), now=datetime.now(timezone.utc))
+        self.assertTrue(
+            any("NOT being screened" in w for w in decision.warnings),
+            "an unconfigured calendar must be stated, not silently treated as all-clear",
+        )
+
+    def test_does_not_warn_when_a_calendar_is_configured_and_quiet(self):
+        decision = build_signal(
+            "XAUUSD", self._trending_history(), now=datetime.now(timezone.utc),
+            economic_events=[], calendar_available=True,
+        )
+        self.assertFalse(any("NOT being screened" in w for w in decision.warnings))
+
+    def test_high_impact_news_pauses_signals(self):
+        from app.news.blackout import EconomicEvent
+
+        now = datetime.now(timezone.utc)
+        event = EconomicEvent("US CPI", "USD", now + timedelta(minutes=10), "HIGH")
+        decision = build_signal(
+            "XAUUSD", self._trending_history(), now=now,
+            economic_events=[event], calendar_available=True,
+        )
+        # The same history produces a CALL with no news -- so this NO_TRADE
+        # is caused by the blackout, not by weak conditions.
+        self.assertEqual(decision.direction, "NO_TRADE")
+        self.assertEqual(decision.market_regime, "NEWS_MODE")
+        self.assertIsNone(decision.expiry_minutes)
+        self.assertTrue(any("US CPI" in w for w in decision.warnings))
+
+    def test_same_history_trades_when_the_news_is_far_away(self):
+        from app.news.blackout import EconomicEvent
+
+        now = datetime.now(timezone.utc)
+        far = EconomicEvent("US CPI", "USD", now + timedelta(hours=6), "HIGH")
+        decision = build_signal(
+            "XAUUSD", self._trending_history(), now=now,
+            economic_events=[far], calendar_available=True,
+        )
+        self.assertNotEqual(decision.market_regime, "NEWS_MODE")
+
+    def test_irrelevant_currency_news_does_not_pause(self):
+        from app.news.blackout import EconomicEvent
+
+        now = datetime.now(timezone.utc)
+        # EUR news must not pause gold.
+        event = EconomicEvent("ECB Rate Decision", "EUR", now + timedelta(minutes=5), "HIGH")
+        decision = build_signal(
+            "XAUUSD", self._trending_history(), now=now,
+            economic_events=[event], calendar_available=True,
+        )
+        self.assertNotEqual(decision.market_regime, "NEWS_MODE")
+
+    def test_timeframes_still_reported_during_a_pause(self):
+        from app.news.blackout import EconomicEvent
+
+        now = datetime.now(timezone.utc)
+        event = EconomicEvent("NFP", "USD", now, "HIGH")
+        decision = build_signal(
+            "XAUUSD", self._trending_history(), now=now,
+            economic_events=[event], calendar_available=True,
+        )
+        self.assertEqual(len(decision.timeframes), 4)

@@ -10,7 +10,7 @@ Tracking against the 10 phases defined in the project spec.
 | 4 | Signal engine (CALL/PUT/NO TRADE, expiries, scoring, history) | **Real, rule-based decision engine** (`apps/api/app/features/signal_engine.py`) writing into the real `signals` table. Expiry scoring is real; the meta trade/no-trade model (spec section 12) and calibrated confidence are not — see below. Signal resolution (spec section 49 — marking WON/LOST/DRAW at expiry) is not built yet, so history/performance still can't be computed from real outcomes. |
 | 5 | Backtesting engine, result calculation, analytics | **Real.** Signal resolution (`app/collector/resolution.py`, spec section 49) marks signals WON/LOST/DRAW at expiry against the real closing price. The historical backtester (`app/backtesting/`, spec section 13) replays the real signal engine over stored candles with an enforced no-look-ahead guarantee, and `/admin/backtesting` reads real runs. Both are honestly limited by how much real candle history exists — see "Backtesting engine" below. |
 | 6 | ML pipeline, independent models, meta model, probability calibration | Not started. UI already distinguishes `MODEL_NOT_READY` from a calibrated confidence, per spec section 10 |
-| 7 | News filter, economic calendar | Frontend UI + static demo calendar data only; no real economic-calendar API integration |
+| 7 | News filter, economic calendar | **Blackout logic is real and tested** (`apps/api/app/news/`) — pre-news pause, NEWS_MODE, post-event stabilization, configurable windows, asset↔currency relevance, wired into the signal engine. `/dashboard/calendar` and `/admin/news` read the real `economic_events` table. **No calendar data provider is connected yet** — that needs a provider choice and is the one remaining piece; the system says so loudly rather than implying it's protected. See "News filter" below. |
 | 8 | Browser/Telegram notifications, PWA | Notification preferences UI built; manifest wired; service worker and real push delivery not implemented |
 | 9 | Admin model tools, backtesting comparison, system monitoring | Frontend shells built with demo data; no real backend behind them |
 | 10 | Subscription/billing architecture | Frontend billing UI only; no payment provider integration |
@@ -97,6 +97,67 @@ the tradeoffs and a safe default (360s). Now that the pipeline is
 verified, avoid further manual `/debug/poll-now` calls outside of the
 weekend-reopen data-quality check above — they spend real API credits
 for no additional verification value at this point.
+
+## News filter (Phase 7) — `apps/api/app/news/`
+
+Spec section 8's news protection, built in two halves: the policy (done,
+real, tested) and the data feed (not connected — needs a provider
+decision).
+
+**What's real and running:**
+- `blackout.py` — pure, dependency-free policy. Pre-news pause →
+  NEWS_MODE at the release → post-event stabilization window, with
+  configurable durations (spec section 8 requires configurability
+  explicitly). 22 unit tests covering window boundaries, impact
+  filtering, and misuse.
+- **Asset↔currency relevance**, which is the part that's easy to get
+  wrong: USD news moves all three instruments; EUR news only EURUSD; GBP
+  news only GBPUSD. Gold is quoted in USD, so a US CPI print is a
+  gold-relevant event even though "XAU" contains no currency code — this
+  is tested explicitly.
+- Wired into `build_signal()`: an active blackout returns NO_TRADE with
+  `market_regime = NEWS_MODE` and a trader-readable reason naming the
+  event, overriding everything else. The multi-timeframe read is still
+  reported during a pause — you can see the market, you just get no
+  signal. Tests confirm the *same* history that produces a CALL with no
+  news produces a NEWS_MODE NO_TRADE with news pending, so the pause is
+  demonstrably caused by the filter and not by weak conditions.
+- Migration `20260830000010` adds a natural-key unique constraint
+  (event_name, currency, event_time) to `economic_events`. Without it, a
+  provider re-fetching the same window — which it must, since `actual`
+  only exists after the release — would duplicate the whole calendar
+  every refresh.
+- `/dashboard/calendar` and `/admin/news` read the real table.
+
+**The one deliberate seam: `calendar_available` is separate from the
+event list.** An empty list from an unconfigured provider means *"we have
+no calendar"*; an empty list from a working provider means *"nothing is
+scheduled"*. Collapsing those two would silently turn an unprotected
+system into one that looks protected — a clean, empty calendar page
+implying the day is clear is exactly the kind of false safety this
+project must not ship. So `NullCalendarProvider` reports
+`is_configured = False`, every signal carries a loud "high-impact news is
+NOT being screened — check the calendar yourself" warning, and the
+calendar page says plainly that this is not an empty day.
+
+**Why no provider is implemented:** the surveyed options are either paid
+(Trading Economics, FinanceFlow) or third-party scrapers of sites whose
+terms don't clearly permit it. Hard-wiring a fragile or questionable
+source into the trading path was the wrong call to make unilaterally —
+it's a cost and compliance decision. **This is the single remaining piece
+of Phase 7, and it is now a one-class change:** implement
+`fetch_upcoming()` in a subclass of `EconomicCalendarProvider`
+(`app/news/base.py`), return tz-aware UTC events, and select it in
+`app/news/factory.py`. Nothing else in the system changes — storage,
+policy, engine wiring and UI are all done.
+
+**Blackout defaults are conventional, not validated:** 30 minutes either
+side. Like the indicator weights, these should be tested against real
+history with the backtester rather than trusted.
+
+Verified: 95 tests passing (up from 67 — 28 new), `tsc --noEmit` and
+`next lint` clean, and all 76 internal `app.*` imports statically
+resolved.
 
 ## Backtesting engine (Phase 5) — `apps/api/app/backtesting/`
 
@@ -429,7 +490,9 @@ as above.
    signal engine and backtesting code. Set `ADMIN_API_KEY` in
    `apps/api/.env` first, or the backtest endpoints will refuse to run
    (by design — they fail closed).
-2. Trigger one poll cycle (`POST /debug/poll-now`, or wait for the
+2. Run migration `20260830000010_economic_events_unique.sql` in the
+   Supabase SQL editor (adds the calendar's natural-key constraint).
+   Then trigger one poll cycle (`POST /debug/poll-now`, or wait for the
    scheduler) and confirm real rows appear in Supabase's
    `market_features` and `signals` tables — the same "verify it actually
    ran, don't just trust that it compiles" pattern used for Phase 2.
@@ -452,18 +515,21 @@ as above.
 7. Regenerate real TypeScript types now that the schema is live:
    `npx supabase gen types typescript --project-id <ref> > apps/web/src/types/database.ts`
    (replacing the `any` placeholder currently there).
-8. Phase 6 (ML) and Phase 7 (news/calendar) are the two remaining honest
-   gaps the signal engine explicitly warns about on every decision —
-   tackle news/calendar first (it's a data-integration problem, and it
-   needs a provider/API-key decision); ML needs real resolved-signal
-   history to train against, so it naturally comes after.
-9. Once a few weeks of real candle history exists, use the backtester to
-   actually validate the signal engine's weights and thresholds instead
-   of leaving them as the starting guesses they currently are. That is
-   the single highest-value use of the backtester, and the reason it was
-   built before the ML phase.
-10. Remaining demo surfaces, in rough priority order: `/dashboard/calendar`
-    + `/admin/news` (Phase 7), `/admin/models` + `/admin/backtesting/compare`
-    (Phase 6), `/dashboard/billing` + `/admin/subscriptions` (Phase 10,
-    needs a payment provider), `/admin/users` (cheap — real `profiles`
-    data already exists), `/admin/logs` (needs audit logging wired up).
+8. **Pick an economic calendar data provider.** The entire news filter
+   is built and tested; only the feed is missing, and it's a one-class
+   change (`app/news/base.py` documents exactly what). Until then every
+   signal correctly warns that news is unscreened. This is the highest-
+   value remaining decision because it's blocking finished work.
+9. Phase 6 (ML) is the other standing gap the engine warns about on every
+   decision. It needs real resolved-signal history to train against, so
+   it comes after enough time has passed for that to accumulate.
+10. Once a few weeks of real candle history exists, use the backtester to
+    validate the signal engine's weights, thresholds, AND the news
+    blackout windows instead of leaving them as the starting guesses they
+    currently are. That is the single highest-value use of the
+    backtester, and the reason it was built before the ML phase.
+11. Remaining demo surfaces, in rough priority order: `/admin/models` +
+    `/admin/backtesting/compare` (Phase 6), `/dashboard/billing` +
+    `/admin/subscriptions` (Phase 10, needs a payment provider),
+    `/admin/users` (cheap — real `profiles` data already exists),
+    `/admin/logs` (needs audit logging wired up).

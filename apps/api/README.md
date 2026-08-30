@@ -83,7 +83,7 @@ Python 3.10+ runs, no `pip install` required:
 python -m unittest discover -s tests -t . -v
 ```
 
-(67/67 passing as of when this was written.) The storage layer, the
+(95/95 passing as of when this was written.) The storage layer, the
 provider, and the scheduler depend on `fastapi`/`httpx`/`supabase`/
 `apscheduler`, which are exercised by actually running the service (see
 "Verified this session" in `docs/PHASE-STATUS.md`) rather than by unit
@@ -127,3 +127,17 @@ project**; that's the next thing to do after restarting this service.
 - Backtest results are only as meaningful as the candle history stored so
   far. A run over a few days is a smoke test of the rules, not evidence
   of accuracy (spec section 15).
+- **No economic calendar provider is connected.** The news-blackout
+  policy (`app/news/blackout.py`) is built and tested — pre-news pause,
+  NEWS_MODE, post-event stabilization, configurable windows, asset↔
+  currency relevance — and wired into the signal engine. What's missing
+  is a data feed. Until one is configured, `NullCalendarProvider` reports
+  `is_configured = False` and every signal carries a loud warning that
+  news is NOT being screened; an empty calendar is never treated as an
+  all-clear.
+
+  To connect one: subclass `EconomicCalendarProvider` in
+  `app/news/base.py`, implement `fetch_upcoming()` returning tz-aware UTC
+  `ProviderEvent`s, and select it in `app/news/factory.py`. Storage
+  (`app/storage/event_repository.py`), the blackout policy, the engine
+  wiring, and the calendar UI are all already done.
