@@ -10,17 +10,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from app.market_data.errors import (  # re-exported so existing callers keep working
+    MarketDataError,
+    RateLimitError,
+    TransientMarketDataError,
+)
 from app.schemas.candle import Asset, Candle
 
-
-class MarketDataError(Exception):
-    """Raised when a provider fails to return usable data -- a bad API
-    key, a rate limit, a network error, or a malformed response. Callers
-    must NEVER catch this and substitute fake/estimated candles; the
-    correct response to a MarketDataError is to skip that poll cycle,
-    record the failure (system_health), and let the staleness/DataStatus
-    logic reflect reality (spec section 42/50: never show stale data as
-    live, never fabricate data)."""
+__all__ = [
+    "MarketDataError",
+    "MarketDataProvider",
+    "RateLimitError",
+    "TransientMarketDataError",
+]
 
 
 class MarketDataProvider(ABC):

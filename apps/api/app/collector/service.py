@@ -20,6 +20,8 @@ from app.features.signal_engine import build_signal
 from app.storage.strategy_repository import load_strategy
 from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
+from app.market_data.closed_bars import split_closed
+from app.market_data.resilience import RetryPolicy, call_with_retry
 from app.news.factory import build_calendar_provider
 from app.schemas.candle import Asset, Candle, Timeframe
 from app.storage import audit_repository as audit
@@ -66,13 +68,21 @@ def _to_feature_dict(c: Candle) -> dict:
 
 
 async def run_poll_cycle(
-    asset: Asset, provider: MarketDataProvider, *, poll_outputsize: int
+    asset: Asset,
+    provider: MarketDataProvider,
+    *,
+    poll_outputsize: int,
+    retry_policy: RetryPolicy | None = None,
 ) -> None:
     started = time.monotonic()
     component = f"market_data.{asset.value}"
 
     try:
-        fresh_m5 = await provider.fetch_latest_m5(asset, poll_outputsize)
+        fresh_m5, retry_outcome = await call_with_retry(
+            lambda: provider.fetch_latest_m5(asset, poll_outputsize),
+            policy=retry_policy or RetryPolicy(),
+            label=f"{provider.name} fetch {asset.value}",
+        )
     except MarketDataError as exc:
         logger.warning("market data fetch failed for %s via %s: %s", asset.value, provider.name, exc)
         report_component_health(component, status="Warning", details={"provider": provider.name, "error": str(exc)})
@@ -91,15 +101,63 @@ async def run_poll_cycle(
         )
         return
 
-    upsert_candles(asset, Timeframe.M5, fresh_m5, source=provider.name)
+    # Reject the still-forming bar (audit FIN-04). Storing a partial candle
+    # corrupts every indicator computed from it AND makes the backtester
+    # better-informed than live was, because by replay time that bar has its
+    # final close. See app/market_data/closed_bars.py.
+    now = datetime.now(timezone.utc)
+    split = split_closed(fresh_m5, Timeframe.M5.value, now)
+
+    if split.future:
+        # Not a partial bar -- a bar that cannot exist. Something is wrong
+        # with a clock or the timezone handling, and until it is explained
+        # none of this asset's data can be trusted.
+        logger.error(
+            "%s returned %d candle(s) opening in the future for %s — clock or timezone fault",
+            provider.name, len(split.future), asset.value,
+        )
+        audit.record(
+            audit.ACTION_MARKET_DATA_FAILED,
+            target_table="candles",
+            target_id=asset.value,
+            metadata={
+                "provider": provider.name,
+                "error": "candles with future open_time",
+                "count": len(split.future),
+                "newest_open_time": split.future[-1].open_time.isoformat(),
+            },
+        )
+
+    if not split.closed:
+        # Every bar was still forming. Nothing to store -- and nothing wrong
+        # either, on a very small outputsize. Reported so it is visible if it
+        # becomes the steady state.
+        logger.warning(
+            "provider %s returned no CLOSED candles for %s (%d still forming)",
+            provider.name, asset.value, len(split.forming),
+        )
+        report_component_health(
+            component,
+            status="Warning",
+            details={
+                "provider": provider.name,
+                "error": "no closed candles in response",
+                "forming_bars_dropped": len(split.forming),
+            },
+        )
+        return
+
+    upsert_candles(asset, Timeframe.M5, split.closed, source=provider.name)
 
     # Pull recent M5 history from storage (not just this poll's batch) so
     # H4 aggregation -- 48 M5 bars per bucket -- has enough to work with
     # even right after a restart.
     history = fetch_recent_candles(asset, Timeframe.M5, _M5_LOOKBACK_FOR_H4)
-    agg_source = [_to_agg_candle(c) for c in (history or fresh_m5)]
+    # split.closed, never fresh_m5 -- the fallback must not smuggle back in
+    # the forming bar that was just filtered out. It would end up inside a
+    # derived M15/H1/H4 bucket, where it is far harder to notice.
+    agg_source = [_to_agg_candle(c) for c in (history or split.closed)]
 
-    now = datetime.now(timezone.utc)
     for target, agg_target in (
         (Timeframe.M15, AggTimeframe.M15),
         (Timeframe.H1, AggTimeframe.H1),
@@ -117,8 +175,19 @@ async def run_poll_cycle(
         status="Healthy",
         details={
             "provider": provider.name,
-            "last_candle_time": fresh_m5[-1].open_time.isoformat(),
+            # The newest CLOSED bar -- the one actually stored. Reporting the
+            # provider's newest bar here would make the feed look fresher than
+            # the data the engine is allowed to use.
+            "last_candle_time": split.closed[-1].open_time.isoformat(),
             "latency_ms": latency_ms,
+            # Answers empirically what the provider's docs don't state: does
+            # this feed include the in-progress bar? A steady 1 per poll means
+            # yes, and that the filter is earning its place.
+            "forming_bars_dropped": len(split.forming),
+            "future_bars_dropped": len(split.future),
+            "retries": retry_outcome.retries,
+            "rate_limited": retry_outcome.rate_limited,
+            **({"recovered_from": retry_outcome.last_error} if retry_outcome.retries else {}),
         },
     )
 

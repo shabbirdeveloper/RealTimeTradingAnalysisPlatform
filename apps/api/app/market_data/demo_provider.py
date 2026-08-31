@@ -29,11 +29,26 @@ _BASE_PRICE: dict[Asset, Decimal] = {
 
 # Roughly asset-appropriate per-candle volatility, purely for making the
 # demo data look plausible -- not calibrated to real market behavior.
+#
+# Every asset in _BASE_PRICE must appear here. When the crypto pairs were
+# added, this map was not extended, and `_STEP_PCT[asset]` raised KeyError --
+# not a MarketDataError, so it escaped run_poll_cycle's handler and aborted
+# the whole cycle, taking signal resolution down with it. Hence the assertion
+# below: a missing entry now fails at import, where it is obvious.
 _STEP_PCT: dict[Asset, Decimal] = {
     Asset.XAUUSD: Decimal("0.0006"),
     Asset.EURUSD: Decimal("0.0004"),
     Asset.GBPUSD: Decimal("0.0005"),
+    Asset.BTCUSD: Decimal("0.0030"),
+    Asset.ETHUSD: Decimal("0.0035"),
 }
+
+_missing = [a.value for a in _BASE_PRICE if a not in _STEP_PCT]
+if _missing:
+    raise RuntimeError(
+        f"DemoMarketDataProvider is missing _STEP_PCT entries for: {_missing}. "
+        "Add every asset to both maps."
+    )
 
 
 class DemoMarketDataProvider(MarketDataProvider):

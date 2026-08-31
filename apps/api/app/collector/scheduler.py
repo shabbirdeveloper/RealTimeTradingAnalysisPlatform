@@ -65,7 +65,22 @@ async def run_all_assets(*, force: bool = False) -> None:
         if not force and not is_market_open(asset):
             logger.debug("%s market closed -- skipping", asset.value)
             continue
-        await run_poll_cycle(asset, provider, poll_outputsize=settings.poll_outputsize)
+        try:
+            await run_poll_cycle(asset, provider, poll_outputsize=settings.poll_outputsize)
+        except Exception:  # noqa: BLE001 -- deliberately broad, see below
+            # run_poll_cycle handles MarketDataError itself. Anything reaching
+            # here is unexpected -- a bug, a storage failure, a provider
+            # returning a shape nobody anticipated. Without this guard it
+            # aborted the whole loop: every asset after this one was skipped
+            # AND, worse, signal resolution below never ran. Signals would sit
+            # ACTIVE past their expiry and accuracy would silently stop being
+            # measured -- a failure that looks like "no results yet" rather
+            # than like an error.
+            #
+            # (This is not hypothetical: a KeyError in the demo provider's
+            # per-asset volatility map did exactly this for anyone running
+            # without an API key.)
+            logger.exception("poll cycle crashed for %s -- continuing with other assets", asset.value)
 
     # Signal resolution (spec section 49) -- checks real candles against
     # any ACTIVE signal whose expiry has passed. Reads already-stored

@@ -15,7 +15,12 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 
-from app.market_data.base import MarketDataError, MarketDataProvider
+from app.market_data.base import (
+    MarketDataError,
+    MarketDataProvider,
+    RateLimitError,
+    TransientMarketDataError,
+)
 from app.schemas.candle import Asset, Candle
 
 logger = logging.getLogger(__name__)
@@ -60,17 +65,37 @@ class TwelveDataProvider(MarketDataProvider):
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.get(_BASE_URL, params=params)
         except httpx.HTTPError as exc:
-            raise MarketDataError(f"Twelve Data request failed for {symbol}: {exc}") from exc
+            # Connection refused, DNS failure, timeout -- the request never
+            # got an answer, so it is worth one more try.
+            raise TransientMarketDataError(
+                f"Twelve Data request failed for {symbol}: {exc}"
+            ) from exc
+
+        _raise_for_rate_limit(response, symbol)
 
         try:
             payload = response.json()
         except ValueError as exc:
-            raise MarketDataError(
+            # A 5xx often arrives as an HTML error page rather than JSON, so
+            # the status code decides retryability here, not the parse failure.
+            error_class = (
+                TransientMarketDataError if response.status_code >= 500 else MarketDataError
+            )
+            raise error_class(
                 f"Twelve Data returned non-JSON for {symbol}: HTTP {response.status_code}"
             ) from exc
 
+        # Twelve Data reports some errors in the body with HTTP 200, including
+        # rate limits, so the payload is checked as well as the status line.
+        _raise_for_payload_rate_limit(payload, symbol)
+
         if response.status_code != 200 or payload.get("status") == "error":
             message = payload.get("message", f"HTTP {response.status_code}")
+            if response.status_code >= 500:
+                raise TransientMarketDataError(f"Twelve Data error for {symbol}: {message}")
+            # 4xx: a bad key, an unknown symbol, a malformed request. The same
+            # call will fail identically forever, and each attempt still spends
+            # a credit from the daily budget -- so this must NOT be retried.
             raise MarketDataError(f"Twelve Data error for {symbol}: {message}")
 
         values = payload.get("values")
@@ -103,3 +128,41 @@ def _parse_value(value: dict) -> Candle:
         close=Decimal(value["close"]),
         volume=Decimal(volume_raw) if volume_raw not in (None, "") else None,
     )
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Retry-After as delay-seconds. The HTTP-date form is not parsed: it
+    would need the server's clock to be trusted, and the caller already
+    bounds its own waiting either way."""
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        seconds = float(raw.strip())
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
+
+
+def _raise_for_rate_limit(response: httpx.Response, symbol: str) -> None:
+    if response.status_code == 429:
+        raise RateLimitError(
+            f"Twelve Data rate limit hit for {symbol}",
+            retry_after=_retry_after_seconds(response),
+        )
+
+
+# Twelve Data signals an exceeded plan limit with code 429 inside a 200 body.
+# Treating that as a generic error would retry it immediately, which is the
+# one response guaranteed to make a rate limit worse.
+_RATE_LIMIT_CODES = {429}
+
+
+def _raise_for_payload_rate_limit(payload: dict, symbol: str) -> None:
+    if not isinstance(payload, dict):
+        return
+    if payload.get("code") in _RATE_LIMIT_CODES:
+        raise RateLimitError(
+            f"Twelve Data rate limit hit for {symbol}: "
+            f"{payload.get('message', 'plan limit reached')}"
+        )
