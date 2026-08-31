@@ -59,7 +59,7 @@ def _latest_signal_row(client, asset_id: str) -> dict | None:
     response = (
         client.table("signals")
         .select("id, direction, grade, expiry_minutes, market_regime, status, "
-                "expiry_at, reasons, warnings")
+                "expiry_at, reasons, warnings, strategy_version")
         .eq("asset_id", asset_id)
         .order("generated_at", desc=True)
         .limit(1)
@@ -116,6 +116,11 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
         "calibrated_confidence": None,
         "grade": decision.grade,
         "market_regime": decision.market_regime,
+        # Which rule set produced this row. Every accuracy comparison across
+        # time must group on this -- rows with different values came from
+        # different rules and pooling them would credit a tuning change with
+        # an improvement it did not cause.
+        "strategy_version": decision.strategy_version or None,
         "model_version_id": None,
         "status": status,
         "session": decision.session,
@@ -149,10 +154,12 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
             latest["direction"], latest["grade"], latest["expiry_minutes"],
             latest["market_regime"],
             _primary_note(latest.get("reasons"), latest.get("warnings")),
+            latest.get("strategy_version") or "",
         ) == _fingerprint(
             direction, decision.grade, decision.expiry_minutes,
             decision.market_regime,
             _primary_note(decision.reasons, decision.warnings),
+            decision.strategy_version or "",
         ):
             _touch(client, latest["id"], generated_at)
             return latest["id"]

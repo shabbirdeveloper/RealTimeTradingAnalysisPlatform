@@ -76,3 +76,32 @@ class TestFingerprint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StrategyVersionIsPartOfIdentity(unittest.TestCase):
+    """A config change made while a decision was standing must open a NEW row.
+
+    Otherwise the change is absorbed into the existing row, which still carries
+    the OLD version stamp -- and the tuning change becomes invisible in exactly
+    the data meant to evaluate it.
+    """
+
+    ARGS = ("NO_TRADE", "REJECTED", None, "RANGING", "Timeframes conflicting.")
+
+    def test_same_decision_under_a_new_rule_set_is_a_new_decision(self):
+        self.assertNotEqual(
+            fingerprint(*self.ARGS, "v1:aaaaaa"),
+            fingerprint(*self.ARGS, "v2:bbbbbb"),
+        )
+
+    def test_same_decision_under_the_same_rule_set_is_still_the_same(self):
+        self.assertEqual(
+            fingerprint(*self.ARGS, "v1:aaaaaa"),
+            fingerprint(*self.ARGS, "v1:aaaaaa"),
+        )
+
+    def test_missing_version_is_treated_as_the_empty_string_not_as_distinct(self):
+        """Rows written before versioning read back as None. None and "" must
+        not fingerprint differently, or every pre-migration row would be
+        duplicated once on the first cycle after deploy."""
+        self.assertEqual(fingerprint(*self.ARGS, ""), fingerprint(*self.ARGS))

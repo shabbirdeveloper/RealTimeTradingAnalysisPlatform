@@ -30,8 +30,19 @@ from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
 from app.features.regime import classify_regime
 from app.instruments import assert_real_market_symbol
 from app.news.blackout import BlackoutConfig, EconomicEvent, evaluate_blackout
+from app.features.strategy import (
+    AssetStrategy,
+    default_strategy,
+    summarize_overrides,
+    version_string,
+)
 
 EXPIRIES = (15, 30, 60)
+
+# Kept as a module constant because the backtester, the tests and the admin UI
+# all need to name "the shipped default" somewhere. The live threshold now
+# comes from app.features.strategy per (asset, expiry) -- this is only its
+# default value. See strategy.py for why that indirection exists.
 TECHNICAL_SCORE_TAKE_THRESHOLD = 78  # matches apps/web's gradeFromConfidence() B cutoff
 
 # How old the newest M5 candle may be before the engine refuses to decide.
@@ -51,6 +62,12 @@ class ExpiryCandidate:
     direction: str
     technical_score: int
     grade: str  # "B" | "REJECTED" -- never higher without calibrated confidence
+    # Which gate declined this expiry, in the strategy config's own words.
+    # None on an accepted candidate. Recorded rather than discarded because
+    # "60m was declined: Asian session not permitted" and "60m was declined:
+    # scored 71" call for completely different tuning responses, and after
+    # the fact the score alone cannot tell them apart.
+    rejection_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +86,10 @@ class SignalDecision:
     timeframes: list[TimeframeBias]
     candidates: list[ExpiryCandidate]
     generated_at: datetime
+    # The exact rule set that produced this decision, e.g. "v1:a3f9c2".
+    # Stamped on every stored signal so results from different rule sets are
+    # never pooled. See strategy.version_string().
+    strategy_version: str = ""
     # Set only when a directional bias existed (spec section 30: "rejected
     # opportunities") but no expiry cleared the B-grade threshold -- e.g.
     # "Potential CALL, REJECTED". Distinguishes an admin-only rejected
@@ -131,17 +152,27 @@ def build_signal(
     candles_by_timeframe: dict[str, list[dict]],
     now: datetime | None = None,
     *,
-    technical_score_threshold: int = TECHNICAL_SCORE_TAKE_THRESHOLD,
+    strategy: AssetStrategy | None = None,
+    technical_score_threshold: int | None = None,
     economic_events: list[EconomicEvent] | None = None,
     calendar_available: bool = False,
     blackout_config: BlackoutConfig | None = None,
     max_candle_age_minutes: int = MAX_CANDLE_AGE_MINUTES,
 ) -> SignalDecision:
-    """`technical_score_threshold` exists so the backtester can sweep it
-    (spec section 32's "minimum confidence" input) without duplicating any
-    of this logic. Live callers should leave it at the default -- a
-    threshold that only holds up in a backtest is exactly the kind of
-    curve-fit this project is supposed to catch, not ship.
+    """`strategy` is the per-expiry rule set for this asset (thresholds,
+    permitted regimes, permitted sessions). Omit it and the shipped
+    defaults apply, which reproduce this engine's behaviour before the
+    strategy config existed -- introducing the apparatus changes no
+    decision by itself. Live callers pass the asset's stored config;
+    `build_signal` itself stays pure, doing no I/O, so the backtester can
+    call it thousands of times per sweep.
+
+    `technical_score_threshold` overrides the minimum score on every expiry
+    at once. It exists so the backtester can sweep it (spec section 32's
+    "minimum confidence" input) without duplicating any of this logic.
+    Live callers should leave it unset -- a threshold that only holds up in
+    a backtest is exactly the kind of curve-fit this project is supposed to
+    catch, not ship.
 
     News protection (spec section 8): pass `economic_events` plus
     `calendar_available=True` when a real calendar feed is configured. The
@@ -157,6 +188,17 @@ def build_signal(
     # graded signal. Raising here (rather than returning NO_TRADE) makes it a
     # loud configuration error instead of a quiet, plausible-looking one.
     assert_real_market_symbol(asset)
+
+    strategy = strategy or default_strategy(asset)
+    if technical_score_threshold is not None:
+        strategy = strategy.with_min_score(technical_score_threshold)
+    # Computed once, before any return path, so every decision this call can
+    # produce -- including the early NO_TRADE exits -- carries the same stamp.
+    # A signal that fell out of a stale-data or news gate is still evidence
+    # about the rule set that was in force, and losing its attribution would
+    # bias the recorded sample toward the cycles that happened to reach the
+    # end of the function.
+    stamp = version_string(strategy)
 
     now = now or datetime.now(timezone.utc)
     session = struct.session_for_time(now)
@@ -177,7 +219,19 @@ def build_signal(
     entry_price = float(m5_candles[-1]["close"]) if m5_candles else 0.0
 
     reasons: list[str] = []
-    warnings: list[str] = [
+
+    # Two separate lists, joined only at the return.
+    #
+    # `warnings` is why THIS decision came out the way it did. `standing` is a
+    # permanent caveat about the platform. They used to share one list with the
+    # standing caveats first -- which meant warnings[0] was the same boilerplate
+    # on every decision, and warnings[0] is exactly what the dashboard cards,
+    # the analyzer's "Reason:" line and the deduplication fingerprint all read.
+    # So every NO_TRADE explained itself as "meta model not available" instead
+    # of naming its actual blocker, and two decisions blocked for entirely
+    # different reasons deduplicated into one row.
+    warnings: list[str] = []
+    standing: list[str] = [
         "Meta trade/no-trade model not available yet (Phase 6) — this decision is technical-score-only.",
     ]
 
@@ -196,12 +250,14 @@ def build_signal(
             expiry_minutes=None, market_regime="UNSTABLE", regime_reason=stale_reason,
             entry_price=entry_price, session=session,
             reasons=["Market data is not fresh enough to analyse."],
-            warnings=warnings, timeframes=timeframes, candidates=[], generated_at=now,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
         )
 
     blackout = evaluate_blackout(economic_events or [], asset, now, blackout_config)
     if not calendar_available:
-        warnings.append(
+        # A standing caveat, not a property of this setup: it is equally true
+        # of every decision until a feed is configured.
+        standing.append(
             "No economic calendar feed is configured — high-impact news is NOT being screened. "
             "Check the calendar yourself before trading."
         )
@@ -217,17 +273,17 @@ def build_signal(
             reasons=["Signal generation paused around a high-impact news release."],
             # Timeframes are still reported: during a pause the trader can
             # see what the market looks like, they just get no signal.
-            warnings=warnings, timeframes=timeframes, candidates=[], generated_at=now,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
         )
 
     insufficient = [t.timeframe for t in timeframes if t.insufficient_data]
     if insufficient:
-        warnings.insert(0, f"Not enough real candle history yet on {', '.join(insufficient)} — analysis will sharpen as more real candles accumulate.")
+        warnings.append(f"Not enough real candle history yet on {', '.join(insufficient)} — analysis will sharpen as more real candles accumulate.")
         return SignalDecision(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
-            reasons=["Insufficient real history to analyze this asset yet."], warnings=warnings,
-            timeframes=timeframes, candidates=[], generated_at=now,
+            reasons=["Insufficient real history to analyze this asset yet."], warnings=warnings + standing,
+            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
         )
 
     bull_votes = sum(1 for t in timeframes if t.bias == "BULLISH")
@@ -253,8 +309,8 @@ def build_signal(
         return SignalDecision(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
-            reasons=["Market conditions not strong enough for a high-quality setup."], warnings=warnings,
-            timeframes=timeframes, candidates=[], generated_at=now,
+            reasons=["Market conditions not strong enough for a high-quality setup."], warnings=warnings + standing,
+            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
         )
 
     target_bias = _bias_label(proposed_direction)
@@ -271,21 +327,42 @@ def build_signal(
             score += 6
         elif regime == "RANGING":
             score -= 8
-        score = round(max(0.0, min(99.0, score)))
-        grade = "B" if score >= technical_score_threshold else "REJECTED"
-        candidates.append(ExpiryCandidate(expiry_minutes=expiry, direction=proposed_direction, technical_score=int(score), grade=grade))
+        score = int(round(max(0.0, min(99.0, score))))
+
+        # The strategy config gets the final say on whether this expiry is
+        # tradeable. It can only decline -- there is no path here by which a
+        # config turns a low score into an accepted signal, and the regime
+        # stand-down above has already run and cannot be overridden from
+        # configuration. See strategy.py: config narrows, never widens.
+        cfg = strategy.for_expiry(expiry)
+        reason = cfg.rejection_reason(regime=regime, session=session, technical_score=score)
+        candidates.append(
+            ExpiryCandidate(
+                expiry_minutes=expiry,
+                direction=proposed_direction,
+                technical_score=score,
+                grade="REJECTED" if reason else "B",
+                rejection_reason=reason,
+            )
+        )
 
     eligible = [c for c in candidates if c.grade != "REJECTED"]
     best = max(eligible, key=lambda c: c.technical_score) if eligible else None
 
     if best is None:
-        warnings.append("No expiry cleared the technical-score threshold for a B grade or better.")
+        # Report each expiry's actual blocker. The old message named the score
+        # threshold unconditionally, which becomes a false explanation the
+        # moment a session or regime gate is what actually declined the setup.
+        blockers = "; ".join(
+            c.rejection_reason for c in candidates if c.rejection_reason
+        ) or "No expiry cleared the strategy config."
+        warnings.append(f"No expiry accepted — {blockers}")
         return SignalDecision(
             asset=asset, direction="NO_TRADE", technical_score=max(c.technical_score for c in candidates),
             grade="REJECTED", expiry_minutes=None, market_regime=regime, regime_reason=regime_reason,
             entry_price=entry_price, session=session,
-            reasons=["Directional bias present but no expiry scored high enough to act on."], warnings=warnings,
-            timeframes=timeframes, candidates=candidates, generated_at=now,
+            reasons=["Directional bias present but no expiry scored high enough to act on."], warnings=warnings + standing,
+            timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp,
             rejected_opportunity_direction=proposed_direction,
         )
 
@@ -294,6 +371,12 @@ def build_signal(
         reasons.append(f"H4 and H1 both {h4.bias.lower()} — trend alignment confirmed.")
     reasons.append(f"{len(aligned)}/4 timeframes aligned {('bullish' if proposed_direction == 'CALL' else 'bearish')}.")
     reasons.append(f"Market regime: {regime.replace('_', ' ').lower()} — {regime_reason}")
+    overrides = summarize_overrides(strategy)
+    if overrides:
+        # Not a warning: a tightened config is the system working as intended.
+        # But it must be visible, or a signal produced under hand-tuned rules
+        # is indistinguishable from one produced under the shipped ones.
+        reasons.append(f"Strategy overrides in force ({stamp}): {'; '.join(overrides)}.")
     if h1_structure.bos:
         reasons.append("H1 structure confirms with a break of structure in the same direction." if (
             (proposed_direction == "CALL" and h1_structure.resistance and entry_price >= h1_structure.resistance) or
@@ -303,6 +386,6 @@ def build_signal(
     return SignalDecision(
         asset=asset, direction=proposed_direction, technical_score=best.technical_score, grade=best.grade,
         expiry_minutes=best.expiry_minutes, market_regime=regime, regime_reason=regime_reason,
-        entry_price=entry_price, session=session, reasons=reasons, warnings=warnings,
-        timeframes=timeframes, candidates=candidates, generated_at=now,
+        entry_price=entry_price, session=session, reasons=reasons, warnings=warnings + standing,
+        timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp,
     )

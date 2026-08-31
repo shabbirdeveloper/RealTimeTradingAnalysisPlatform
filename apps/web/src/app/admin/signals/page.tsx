@@ -21,7 +21,7 @@ export default async function AdminSignalsPage() {
         <p className="text-sm text-muted-foreground">Real accepted signals and real rejected opportunities, both retained for analysis.</p>
       </div>
 
-      <ThresholdCurve buckets={curve} />
+      <ThresholdCurve report={curve} />
 
       <Tabs defaultValue="accepted">
         <TabsList>

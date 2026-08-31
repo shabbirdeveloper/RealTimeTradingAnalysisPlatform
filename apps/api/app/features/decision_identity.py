@@ -17,7 +17,14 @@ from __future__ import annotations
 # Fields that define a decision's identity. Notably ABSENT: technical_score.
 # It drifts a point or two every cycle as the newest candle lands, and
 # treating that drift as a new signal would defeat the entire purpose.
-IDENTITY_FIELDS = ("direction", "grade", "expiry_minutes", "market_regime", "primary_note")
+IDENTITY_FIELDS = (
+    "direction",
+    "grade",
+    "expiry_minutes",
+    "market_regime",
+    "primary_note",
+    "strategy_version",
+)
 
 # The reason text is compared truncated: two NO_TRADEs whose explanations
 # differ only in a trailing minute count ("news in 12 min" vs "in 11 min")
@@ -41,6 +48,7 @@ def fingerprint(
     expiry_minutes: int | None,
     market_regime: str,
     note: str,
+    strategy_version: str = "",
 ) -> tuple:
     """Identity tuple for a decision. Equal fingerprints mean the state has
     not materially changed and no new row should be written.
@@ -49,5 +57,22 @@ def fingerprint(
     switches from "timeframes conflicting" to a news blackout is a genuinely
     different state a trader would want recorded, even though the direction
     and grade are unchanged.
+
+    `strategy_version` is included for a different reason. An identical-looking
+    decision produced under a NEW rule set is not the same decision -- it is
+    the first observation of the new rules. Without this, a config change made
+    while a NO_TRADE was standing would be absorbed into the existing row,
+    which still carries the OLD version stamp. The tuning change would then be
+    invisible in exactly the data meant to evaluate it.
+
+    It defaults to "" so callers that predate versioning keep working; live
+    callers always pass it.
     """
-    return (direction, grade, expiry_minutes, market_regime, (note or "")[:_NOTE_COMPARE_CHARS])
+    return (
+        direction,
+        grade,
+        expiry_minutes,
+        market_regime,
+        (note or "")[:_NOTE_COMPARE_CHARS],
+        strategy_version or "",
+    )

@@ -17,6 +17,7 @@ from app.aggregation import Candle as AggCandle
 from app.aggregation import Timeframe as AggTimeframe
 from app.aggregation import aggregate_candles
 from app.features.signal_engine import build_signal
+from app.storage.strategy_repository import load_strategy
 from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
 from app.news.factory import build_calendar_provider
@@ -149,13 +150,28 @@ def _run_analysis_cycle(asset: Asset) -> None:
         calendar_available = calendar_provider.is_configured
         events = fetch_events_near(now) if calendar_available else []
 
+        # Per-asset/expiry tuning (spec sections 4 and 11). An unreachable
+        # config table falls back to the shipped defaults rather than halting
+        # signal generation -- but that is failing OPEN if an admin had
+        # tightened the rules, so it is stated on the decision rather than
+        # swallowed. The version stamp keeps the data honest either way:
+        # signals generated during the outage carry the defaults' fingerprint
+        # and can never be pooled with the tightened config's results.
+        loaded = load_strategy(asset)
+
         decision = build_signal(
             asset.value,
             candles_by_timeframe,
             now=now,
+            strategy=loaded.strategy,
             economic_events=events,
             calendar_available=calendar_available,
         )
+        if not loaded.loaded:
+            decision.warnings.append(
+                "Strategy configuration could not be read — running shipped defaults, "
+                "which may be looser than the configured rules."
+            )
         insert_signal(asset, decision)
     except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
         logger.exception("analysis cycle failed for %s", asset.value)
