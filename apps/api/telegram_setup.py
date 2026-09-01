@@ -15,6 +15,7 @@ writes nothing -- it tells you the line to add.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 ENV = Path(__file__).resolve().parent / ".env"
@@ -53,11 +54,36 @@ def main() -> None:
 
     api = f"https://api.telegram.org/bot{token}"
 
-    try:
-        me = httpx.get(f"{api}/getMe", timeout=15).json()
-    except Exception as exc:  # noqa: BLE001
-        # The URL carries the token, so report the type only.
-        print(f"\nCould not reach Telegram ({type(exc).__name__}). Check your connection.\n")
+    # Retried, and with a longer timeout, because the first symptom of an
+    # ISP-level block is a timeout that looks exactly like a slow network.
+    # Telling those apart matters: one clears on its own, the other never will.
+    me = None
+    last_error = None
+    for attempt in (1, 2, 3):
+        try:
+            me = httpx.get(f"{api}/getMe", timeout=30).json()
+            break
+        except Exception as exc:  # noqa: BLE001
+            # The URL carries the token, so report the type only.
+            last_error = type(exc).__name__
+            if attempt < 3:
+                print(f"  attempt {attempt} failed ({last_error}) — retrying...")
+                time.sleep(2)
+
+    if me is None:
+        print(f"\nCould not reach api.telegram.org after 3 attempts ({last_error}).")
+        print("\nThe token was read fine, so this is the network, not the setup.")
+        print("\nCheck which it is — open this in a browser:")
+        print("    https://api.telegram.org")
+        print("\n  * Page loads          -> transient. Just run this script again.")
+        print("  * Page never loads    -> Telegram is blocked on this connection.")
+        print("                           Several countries block it at the ISP.")
+        print("\nIf it is blocked, alerting needs a channel that is not:")
+        print("  * a VPN while the collector runs (simplest, but it must stay on)")
+        print("  * a Discord webhook — usually reachable where Telegram is not")
+        print("  * email, or a desktop notification on this machine")
+        print("\nNothing else is affected: signals are still recorded and shown")
+        print("in the dashboard. Only the push notification needs another route.\n")
         sys.exit(1)
 
     if not me.get("ok"):
