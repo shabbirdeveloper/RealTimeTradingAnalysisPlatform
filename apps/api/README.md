@@ -81,6 +81,21 @@ uvicorn app.main:app --reload
 
 Then check `http://127.0.0.1:8000/health`.
 
+## Day-to-day (Windows)
+
+Double-click these in `apps/api`, or run them from any prompt on any drive:
+
+| File | What it does |
+| --- | --- |
+| `start-collector.bat` | Starts the collector. **Leave the window open** — closing it stops collection. |
+| `check.bat` | Reports where the pipeline is stuck. Safe any time. |
+| `backfill.bat --run` | Fetches historical candles so the engine can warm up. |
+
+Each begins with `cd /d "%~dp0"` for a specific reason: plain `cd` on Windows
+changes the directory on a drive without switching to it, so `cd F:\...` typed
+at a `C:` prompt leaves you on `C:` and every relative path silently resolves
+in the wrong place.
+
 ## Warming up the engine (backfill)
 
 The engine needs 250 bars per timeframe before it will analyse one. The live
