@@ -87,7 +87,7 @@ Double-click these in `apps/api`, or run them from any prompt on any drive:
 
 | File | What it does |
 | --- | --- |
-| `install-autostart.bat` | **Run once.** Starts the collector at every logon, and restarts it if it crashes. |
+| `install-autostart.bat` | **Run once.** Starts the collector at every logon, and restarts it if it crashes. No admin rights. |
 | `start-collector.bat` | Starts it in the foreground. Closing the window stops collection. |
 | `run-collector-forever.bat` | Same, but restarts after a crash. This is what autostart runs. |
 | `check.bat` | Reports where the pipeline is stuck. Safe any time. |
@@ -98,7 +98,10 @@ resolves signals when they reach expiry. Every gap is history never collected
 and signals never scored, and both are unrecoverable after the fact.
 
 `install-autostart.bat` fixes the two ways it has actually died: the terminal
-window being closed, and the machine restarting. It does **not** fix sleep. A
+window being closed, and the machine restarting. It installs into the per-user
+Startup folder rather than creating a scheduled task — `schtasks /sc onlogon`
+requires administrator rights and fails with "Access is denied" on a normal
+account. `uninstall-autostart.bat` reverses it. It does **not** fix sleep. A
 laptop that sleeps still stops collecting; genuinely continuous operation
 needs a machine that stays awake.
 
