@@ -58,6 +58,25 @@ MAX_CANDLE_AGE_MINUTES = 15
 
 
 @dataclass(frozen=True)
+class DecisionCheck:
+    """One gate the setup had to pass, and whether it did (spec Phase 26).
+
+    Recorded for EVERY decision, not just rejections. A trader looking at a
+    NO_TRADE card wants to know which gate stopped it and how close it came;
+    a trader looking at an accepted signal wants to know what it cleared. The
+    engine already evaluates all of this -- it just used to throw the working
+    away and keep one sentence.
+    """
+
+    name: str          # "Multi-timeframe agreement"
+    passed: bool
+    detail: str        # "2 of 4 bullish — needs 3"
+    # None when the gate has no meaningful numeric form (a news blackout).
+    value: str | None = None
+    required: str | None = None
+
+
+@dataclass(frozen=True)
 class ExpiryCandidate:
     expiry_seconds: int
     direction: str
@@ -86,6 +105,9 @@ class SignalDecision:
     warnings: list[str]
     timeframes: list[TimeframeBias]
     candidates: list[ExpiryCandidate]
+    # Every gate this setup was put through, in order, with the first failure
+    # marking where it stopped. This is the whole audit trail for a decision.
+    checks: list[DecisionCheck]
     generated_at: datetime
     # The exact rule set that produced this decision, e.g. "v1:a3f9c2".
     # Stamped on every stored signal so results from different rule sets are
@@ -274,6 +296,7 @@ def build_signal(
     # So every NO_TRADE explained itself as "meta model not available" instead
     # of naming its actual blocker, and two decisions blocked for entirely
     # different reasons deduplicated into one row.
+    checks: list[DecisionCheck] = []
     warnings: list[str] = []
     standing: list[str] = [
         "Meta trade/no-trade model not available yet (Phase 6) — this decision is technical-score-only.",
@@ -286,11 +309,21 @@ def build_signal(
     # graded signal. The frontend shows a freshness badge, which makes an
     # ungated engine actively misleading: the UI implies a check the engine
     # never performed.
+    def record(name: str, passed: bool, detail: str,
+               value: str | None = None, required: str | None = None) -> None:
+        checks.append(DecisionCheck(name=name, passed=passed, detail=detail,
+                                    value=value, required=required))
+
     stale_reason = _staleness_reason(
         entry_candles, now,
         max_candle_age_minutes if max_candle_age_minutes is not None
         else profile.max_data_age_seconds / 60,
         profile.entry_timeframe,
+    )
+    record(
+        "Data freshness", stale_reason is None,
+        stale_reason or f"Newest {profile.entry_timeframe} candle is current.",
+        required=f"under {profile.max_data_age_seconds // 60} min old",
     )
     if stale_reason is not None:
         warnings.append(stale_reason)
@@ -299,7 +332,7 @@ def build_signal(
             expiry_seconds=None, market_regime="UNSTABLE", regime_reason=stale_reason,
             entry_price=entry_price, session=session,
             reasons=["Market data is not fresh enough to analyse."],
-            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     blackout = evaluate_blackout(economic_events or [], asset, now, blackout_config)
@@ -311,6 +344,12 @@ def build_signal(
             "Check the calendar yourself before trading."
         )
 
+    record(
+        "News window", not blackout.active,
+        blackout.reason or ("No high-impact news nearby."
+                            if calendar_available
+                            else "No calendar feed configured — news is NOT screened."),
+    )
     if blackout.active:
         # A news blackout overrides everything: spec section 8 pauses signal
         # generation outright rather than scoring through it.
@@ -322,28 +361,50 @@ def build_signal(
             reasons=["Signal generation paused around a high-impact news release."],
             # Timeframes are still reported: during a pause the trader can
             # see what the market looks like, they just get no signal.
-            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     insufficient = [t.timeframe for t in timeframes if t.insufficient_data]
+    record(
+        "History warm-up", not insufficient,
+        f"Not enough history on {', '.join(insufficient)}." if insufficient
+        else "All timeframes have enough history.",
+        value=f"{len(timeframes) - len(insufficient)}/{len(timeframes)} ready",
+    )
     if insufficient:
         warnings.append(f"Not enough real candle history yet on {', '.join(insufficient)} — analysis will sharpen as more real candles accumulate.")
         return SignalDecision(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Insufficient real history to analyze this asset yet."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     bull_votes = sum(1 for t in timeframes if t.bias == "BULLISH")
     bear_votes = sum(1 for t in timeframes if t.bias == "BEARISH")
 
+    needed = 3
     proposed_direction = "NO_TRADE"
-    if bull_votes >= 3:
+    if bull_votes >= needed:
         proposed_direction = "CALL"
-    elif bear_votes >= 3:
+    elif bear_votes >= needed:
         proposed_direction = "PUT"
 
+    # This is the gate that stops the overwhelming majority of cycles, so it
+    # is the one worth showing a trader most precisely: not "conflicting" but
+    # how many agreed and how many were needed.
+    leading = max(bull_votes, bear_votes)
+    record(
+        "Multi-timeframe agreement", proposed_direction != "NO_TRADE",
+        ", ".join(f"{t.timeframe} {t.bias.lower()}" for t in timeframes),
+        value=f"{leading} of {len(timeframes)} agree",
+        required=f"{needed} of {len(timeframes)}",
+    )
+
+    record(
+        "Market regime", regime not in ("HIGH_VOLATILITY", "UNSTABLE"),
+        regime_reason, value=regime.replace("_", " ").lower(),
+    )
     if regime in ("HIGH_VOLATILITY", "UNSTABLE"):
         warnings.append(f"Market regime classified {regime} — standing down regardless of timeframe alignment.")
         proposed_direction = "NO_TRADE"
@@ -358,7 +419,7 @@ def build_signal(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Market conditions not strong enough for a high-quality setup."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     target_bias = _bias_label(proposed_direction)
@@ -397,6 +458,17 @@ def build_signal(
     eligible = [c for c in candidates if c.grade != "REJECTED"]
     best = max(eligible, key=lambda c: c.technical_score) if eligible else None
 
+    top = max(candidates, key=lambda c: c.technical_score)
+    record(
+        "Setup quality", best is not None,
+        (f"Best expiry {format_expiry(best.expiry_seconds)} scored {best.technical_score}."
+         if best else
+         "; ".join(c.rejection_reason for c in candidates if c.rejection_reason)
+         or "No expiry cleared the strategy config."),
+        value=f"{top.technical_score}/100",
+        required=f"{strategy.for_expiry(top.expiry_seconds).min_technical_score}/100",
+    )
+
     if best is None:
         # Report each expiry's actual blocker. The old message named the score
         # threshold unconditionally, which becomes a false explanation the
@@ -410,7 +482,7 @@ def build_signal(
             grade="REJECTED", expiry_seconds=None, market_regime=regime, regime_reason=regime_reason,
             entry_price=entry_price, session=session,
             reasons=["Directional bias present but no expiry scored high enough to act on."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            timeframes=timeframes, candidates=candidates, checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
             rejected_opportunity_direction=proposed_direction,
         )
 
@@ -440,5 +512,5 @@ def build_signal(
         asset=asset, direction=proposed_direction, technical_score=best.technical_score, grade=best.grade,
         expiry_seconds=best.expiry_seconds, market_regime=regime, regime_reason=regime_reason,
         entry_price=entry_price, session=session, reasons=reasons, warnings=warnings + standing,
-        timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+        timeframes=timeframes, candidates=candidates, checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
     )

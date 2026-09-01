@@ -66,6 +66,16 @@ def _candidates_snapshot(decision: SignalDecision) -> list[dict]:
     return [asdict(c) for c in decision.candidates]
 
 
+def _checks_snapshot(decision: SignalDecision) -> list[dict]:
+    """Spec Phase 26/27: the gates this setup passed and where it stopped.
+
+    Stored with the signal rather than recomputed, because the market has
+    moved on by the time anyone looks. A reason reconstructed later from
+    current data would describe a different moment than the decision did.
+    """
+    return [asdict(c) for c in decision.checks]
+
+
 def _latest_signal_row(client, asset_id: str) -> dict | None:
     response = (
         client.table("signals")
@@ -165,6 +175,7 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
         "timeframes_snapshot": {
             "timeframes": _timeframes_snapshot(decision),
             "candidates": _candidates_snapshot(decision),
+            "checks": _checks_snapshot(decision),
             "regime_reason": decision.regime_reason,
         },
     }

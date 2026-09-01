@@ -7,6 +7,7 @@ import { ASSET_CONFIGS } from "@/data/assets";
 import type { Signal } from "@/types";
 import { cn, expirySecondsOf, formatCountdown, formatDateTimeUTC, formatExpiry, formatPrice } from "@/lib/utils";
 import { Clock, Sparkles } from "lucide-react";
+import { DecisionChecks } from "@/components/dashboard/decision-checks";
 
 export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now: Date; index?: number }) {
   const cfg = ASSET_CONFIGS[signal.asset];
@@ -44,9 +45,16 @@ export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now
         <DirectionBadge direction={signal.direction} className="text-sm" />
 
         {isNoTrade ? (
-          <p className="rounded-md border border-dashed border-border bg-secondary/30 p-3 text-sm text-muted-foreground">
-            {signal.warnings[0] ?? signal.reasons[0] ?? "Market conditions not strong enough for a signal."}
-          </p>
+          <div className="rounded-md border border-dashed border-border bg-secondary/30 p-3">
+            <p className="text-sm text-muted-foreground">
+              {signal.warnings[0] ?? signal.reasons[0] ?? "Market conditions not strong enough for a signal."}
+            </p>
+            {signal.checks && signal.checks.length > 0 && (
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <DecisionChecks checks={signal.checks} />
+              </div>
+            )}
+          </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-4 rounded-lg border border-border/70 bg-secondary/20 p-3.5 sm:grid-cols-4">

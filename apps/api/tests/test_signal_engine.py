@@ -305,3 +305,76 @@ class TestStalenessGate(unittest.TestCase):
         self.assertEqual(decision.technical_score, 0)
         self.assertEqual(decision.candidates, [])
         self.assertIsNone(decision.rejected_opportunity_direction)
+
+
+class DecisionChecksExplainThemselves(unittest.TestCase):
+    """Spec Phase 26. A NO_TRADE carrying one sentence says what happened but
+    not how close it came or which gate was responsible — which is what
+    someone staring at an unchanging card actually wants to know."""
+
+    def _conflicting(self, now):
+        return {
+            "H4": make_candles(300, 2400, 3.0, 240, ending_at=now),
+            "H1": make_candles(300, 2400, 1.0, 60, ending_at=now),
+            "M15": make_candles(300, 2400, -0.6, 15, ending_at=now),
+            "M5": make_candles(300, 2400, -0.3, 5, ending_at=now),
+        }
+
+    def _trending(self, now):
+        return {tf: make_candles(300, 2400, drift, step, ending_at=now)
+                for tf, drift, step in
+                (("H4", 24.0, 240), ("H1", 6.0, 60), ("M15", 1.5, 15), ("M5", 0.5, 5))}
+
+    def test_every_decision_records_its_gates(self):
+        now = datetime.now(timezone.utc)
+        for history in (self._conflicting(now), self._trending(now)):
+            decision = build_signal("XAUUSD", history, now=now)
+            self.assertTrue(decision.checks, "no checks recorded")
+            names = [c.name for c in decision.checks]
+            self.assertIn("Data freshness", names)
+            self.assertIn("Multi-timeframe agreement", names)
+
+    def test_the_failing_gate_is_identifiable(self):
+        now = datetime.now(timezone.utc)
+        decision = build_signal("XAUUSD", self._conflicting(now), now=now)
+        self.assertEqual(decision.direction, "NO_TRADE")
+        failed = [c for c in decision.checks if not c.passed]
+        self.assertEqual(len(failed), 1, "exactly one gate should stop a decision")
+        self.assertEqual(failed[0].name, "Multi-timeframe agreement")
+
+    def test_the_agreement_gate_shows_the_shortfall_numerically(self):
+        """'Conflicting' is a verdict; '2 of 4, needs 3' is information."""
+        now = datetime.now(timezone.utc)
+        decision = build_signal("XAUUSD", self._conflicting(now), now=now)
+        gate = next(c for c in decision.checks if c.name == "Multi-timeframe agreement")
+        self.assertIn("of 4", gate.value or "")
+        self.assertIn("3 of 4", gate.required or "")
+
+    def test_an_accepted_signal_passes_every_gate(self):
+        now = datetime.now(timezone.utc)
+        decision = build_signal("XAUUSD", self._trending(now), now=now)
+        if decision.direction in ("CALL", "PUT"):
+            self.assertTrue(all(c.passed for c in decision.checks),
+                            [c.name for c in decision.checks if not c.passed])
+
+    def test_gates_after_the_blocker_are_not_claimed_as_passed(self):
+        """The engine really does stop at the first failure. Recording later
+        gates as passed would be a more confident story than the truth."""
+        now = datetime.now(timezone.utc)
+        stale = self._trending(now - timedelta(hours=4))
+        decision = build_signal("XAUUSD", stale, now=now)
+        self.assertEqual(decision.direction, "NO_TRADE")
+        names = [c.name for c in decision.checks]
+        self.assertEqual(names[0], "Data freshness")
+        self.assertFalse(decision.checks[0].passed)
+        self.assertNotIn("Setup quality", names)
+
+    def test_the_score_gate_reports_the_shortfall(self):
+        now = datetime.now(timezone.utc)
+        decision = build_signal("XAUUSD", self._trending(now), now=now,
+                                technical_score_threshold=99)
+        gate = next((c for c in decision.checks if c.name == "Setup quality"), None)
+        self.assertIsNotNone(gate)
+        self.assertFalse(gate.passed)
+        self.assertIn("/100", gate.value or "")
+        self.assertIn("99", gate.required or "")

@@ -125,6 +125,10 @@ interface SignalRow {
       rejection_reason?: string | null;
     }[];
     regime_reason?: string;
+    checks?: {
+      name: string; passed: boolean; detail: string;
+      value?: string | null; required?: string | null;
+    }[];
   } | null;
 }
 
@@ -153,6 +157,13 @@ function shapeSignal(asset: AssetSymbol, row: SignalRow): Signal {
     confidence: row.calibrated_confidence,
     technicalScore: row.technical_score,
     grade: row.grade,
+    checks: (row.timeframes_snapshot?.checks ?? []).map((c) => ({
+      name: c.name,
+      passed: c.passed,
+      detail: c.detail,
+      value: c.value ?? null,
+      required: c.required ?? null,
+    })),
     expiryMinutes: row.expiry_minutes,
     expirySeconds: row.expiry_seconds ?? (row.expiry_minutes != null ? row.expiry_minutes * 60 : null),
     marketRegime: row.market_regime,

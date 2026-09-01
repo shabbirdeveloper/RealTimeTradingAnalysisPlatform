@@ -71,6 +71,17 @@ export interface SignalReasonSet {
   warnings: string[];
 }
 
+/** One gate a setup was put through (spec Phase 26). Recorded for every
+ *  decision, so a NO TRADE can say which check stopped it and how close it
+ *  came, instead of only that it happened. */
+export interface DecisionCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+  value: string | null;
+  required: string | null;
+}
+
 export interface ExpiryCandidate {
   expiryMinutes: ExpiryMinutes;
   expirySeconds?: number | null;
@@ -94,6 +105,7 @@ export interface Signal {
    *  expiryMinutes cannot express; it is null for those signals. */
   expirySeconds: number | null;
   marketRegime: MarketRegime;
+  checks?: DecisionCheck[];
   generatedAt: string; // ISO
   entryPrice: number | null;
   validUntil: string | null; // ISO
