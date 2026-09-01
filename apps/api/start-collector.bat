@@ -20,8 +20,12 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b 1
 )
 
-echo Starting the collector. LEAVE THIS WINDOW OPEN --
-echo closing it stops data collection and signal generation.
+echo Starting the collector. LEAVE THIS WINDOW OPEN.
+echo.
+echo It polls every 10 minutes. Between cycles it sits QUIET -- that is
+echo normal, not a hang. Do not press Ctrl+C; that stops collecting.
+echo.
+echo Use a SECOND window for check.bat and everything else.
 echo.
 .venv\Scripts\python.exe -m uvicorn app.main:app
 

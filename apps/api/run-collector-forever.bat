@@ -26,6 +26,7 @@ set ATTEMPT=0
 set /a ATTEMPT+=1
 echo.
 echo [%DATE% %TIME%] starting collector (run #%ATTEMPT%)
+echo Polls every 10 minutes. Quiet between cycles is normal -- do not Ctrl+C.
 .venv\Scripts\python.exe -m uvicorn app.main:app
 
 REM A clean Ctrl+C exits here too. That is deliberate: an operator stopping

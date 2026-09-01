@@ -148,6 +148,11 @@ async def run_poll_cycle(
         )
         return
 
+    logger.info(
+        "%s: %d closed M5 bars from %s (dropped %d forming), newest %s",
+        asset.value, len(split.closed), provider.name, len(split.forming),
+        split.closed[-1].open_time.strftime("%H:%M"),
+    )
     upsert_candles(asset, Timeframe.M5, split.closed, source=provider.name)
 
     # Pull recent M5 history from storage (not just this poll's batch) so
@@ -267,6 +272,17 @@ def _run_analysis_cycle(asset: Asset, provider: MarketDataProvider) -> None:
                 "Strategy configuration could not be read — running shipped defaults, "
                 "which may be looser than the configured rules."
             )
+        # The decision itself, on one line. This is the thing the operator is
+        # actually waiting to see, and it was only ever written to the
+        # database -- so the console gave no sign the engine was thinking.
+        note = (decision.warnings or decision.reasons or [""])[0]
+        logger.info(
+            "%s: %s %s score=%d regime=%s%s | %s",
+            asset.value, decision.direction, decision.grade,
+            decision.technical_score, decision.market_regime,
+            f" expiry={decision.expiry_seconds}s" if decision.expiry_seconds else "",
+            note[:110],
+        )
         insert_signal(asset, decision)
     except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
         logger.exception("analysis cycle failed for %s", asset.value)

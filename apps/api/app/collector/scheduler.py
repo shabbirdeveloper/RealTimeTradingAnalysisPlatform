@@ -10,6 +10,7 @@ serverless/short-lived environment.
 from __future__ import annotations
 
 import logging
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -56,6 +57,13 @@ async def run_all_assets(*, force: bool = False) -> None:
         logger.warning("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set -- skipping poll cycle")
         return
 
+    # A cycle that succeeds used to log NOTHING. The console then sat silent
+    # for the whole poll interval, which is indistinguishable from a hung
+    # process -- and a collector that looks hung gets killed. Silence is a
+    # terrible way to report "working".
+    started = time.monotonic()
+    logger.info("---- poll cycle starting ----")
+
     provider = build_provider()
     for asset in Asset:
         # Per-asset, not per-cycle: crypto trades through the weekend while
@@ -81,6 +89,12 @@ async def run_all_assets(*, force: bool = False) -> None:
             # per-asset volatility map did exactly this for anyone running
             # without an API key.)
             logger.exception("poll cycle crashed for %s -- continuing with other assets", asset.value)
+
+    elapsed = time.monotonic() - started
+    logger.info(
+        "---- poll cycle done in %.1fs; next in ~%ds ----",
+        elapsed, settings.poll_interval_seconds,
+    )
 
     # Signal resolution (spec section 49) -- checks real candles against
     # any ACTIVE signal whose expiry has passed. Reads already-stored
