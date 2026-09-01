@@ -187,11 +187,42 @@ class TestSyntheticInstrumentGuard(unittest.TestCase):
             "M5": make_candles(250, 2000, 0.2, 5),
         }
 
-    def test_otc_symbol_is_refused(self):
-        from app.instruments import SyntheticInstrumentError
+    def test_otc_instrument_priced_by_a_forex_feed_is_refused(self):
+        """The dangerous case: real interbank EUR/USD analysed and shipped as
+        a graded signal for Quotex's EUR/USD OTC, which is a different series
+        entirely."""
+        from app.instruments import FeedDescriptor, FeedKind, FeedProvenanceError
 
-        with self.assertRaises(SyntheticInstrumentError):
+        with self.assertRaises(FeedProvenanceError):
+            build_signal(
+                "EURUSD_OTC", self._history(), now=datetime.now(timezone.utc),
+                feed=FeedDescriptor("twelve_data", FeedKind.PUBLIC_MARKET),
+            )
+
+    def test_otc_instrument_without_stated_provenance_is_refused(self):
+        from app.instruments import FeedProvenanceError
+
+        with self.assertRaises(FeedProvenanceError):
+            build_signal("EURUSD_OTC", self._history(), now=datetime.now(timezone.utc))
+
+    def test_unregistered_otc_spelling_is_refused(self):
+        from app.instruments import UnknownInstrumentError
+
+        with self.assertRaises(UnknownInstrumentError):
             build_signal("EURUSD-OTC", self._history(), now=datetime.now(timezone.utc))
+
+    def test_otc_instrument_with_its_own_broker_feed_is_analysed(self):
+        """The point of the provenance rule: OTC becomes legitimate the
+        moment genuine OTC prices are what is flowing in."""
+        from app.instruments import FeedDescriptor, FeedKind
+
+        decision = build_signal(
+            "EURUSD_OTC", self._history(), now=datetime.now(timezone.utc),
+            feed=FeedDescriptor("quotex_otc", FeedKind.BROKER_OTC, broker="QUOTEX"),
+        )
+        self.assertIn(decision.direction, ("CALL", "PUT", "NO_TRADE"))
+        self.assertEqual(decision.market_type, "BROKER_OTC")
+        self.assertEqual(decision.data_source, "quotex_otc")
 
     def test_real_symbol_still_works(self):
         decision = build_signal("EURUSD", self._history(), now=datetime.now(timezone.utc))

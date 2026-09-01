@@ -27,10 +27,31 @@ class TestCandleCloseTime(unittest.TestCase):
         self.assertEqual(replay.candle_close_time(candle(t), "M5"), t + timedelta(minutes=5))
         self.assertEqual(replay.candle_close_time(candle(t), "H4"), t + timedelta(minutes=240))
 
+    def test_sub_minute_timeframes_are_supported(self):
+        """Broker-OTC instruments are traded on 15s-1m horizons. These were
+        unrepresentable while durations were integer minutes -- 15 seconds is
+        not an integer number of minutes -- so the no-look-ahead rule could
+        not be applied to them at all."""
+        t = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+        self.assertEqual(replay.candle_close_time(candle(t), "S15"), t + timedelta(seconds=15))
+        self.assertEqual(replay.candle_close_time(candle(t), "S30"), t + timedelta(seconds=30))
+        self.assertEqual(replay.candle_close_time(candle(t), "M1"), t + timedelta(minutes=1))
+        self.assertEqual(replay.candle_close_time(candle(t), "M3"), t + timedelta(minutes=3))
+
+    def test_sub_minute_look_ahead_rule_still_holds(self):
+        """The whole guarantee, at 15-second resolution: a bar that opened
+        10 seconds ago has not closed and must not be visible."""
+        t = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+        bars = [candle(t), candle(t + timedelta(seconds=15)), candle(t + timedelta(seconds=30))]
+        as_of = t + timedelta(seconds=40)
+        visible = replay.candles_closed_by(bars, "S15", as_of)
+        self.assertEqual([c["open_time"] for c in visible],
+                         [t, t + timedelta(seconds=15)])
+
     def test_unknown_timeframe_raises(self):
         t = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
         with self.assertRaises(replay.ReplayError):
-            replay.candle_close_time(candle(t), "M1")
+            replay.candle_close_time(candle(t), "M7")
 
     def test_naive_datetime_raises(self):
         naive = datetime(2026, 8, 24, 12, 0)

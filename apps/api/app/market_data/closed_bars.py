@@ -43,7 +43,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol, Sequence, TypeVar
 
-from app.backtesting.replay import TIMEFRAME_MINUTES, ReplayError
+from app.backtesting.replay import TIMEFRAME_SECONDS, ReplayError
 
 
 class HasOpenTime(Protocol):
@@ -73,11 +73,11 @@ class ClosedBarSplit:
         return len(self.forming) + len(self.future)
 
 
-def interval_minutes(timeframe: str) -> int:
-    minutes = TIMEFRAME_MINUTES.get(timeframe)
-    if minutes is None:
+def interval_seconds(timeframe: str) -> int:
+    seconds = TIMEFRAME_SECONDS.get(timeframe)
+    if seconds is None:
         raise ReplayError(f"unknown timeframe {timeframe!r}")
-    return minutes
+    return seconds
 
 
 def split_closed(
@@ -98,7 +98,7 @@ def split_closed(
     if now.tzinfo is None:
         raise ReplayError("now must be timezone-aware (UTC); got a naive datetime")
 
-    duration = timedelta(minutes=interval_minutes(timeframe))
+    duration = timedelta(seconds=interval_seconds(timeframe))
     closed: list = []
     forming: list = []
     future: list = []

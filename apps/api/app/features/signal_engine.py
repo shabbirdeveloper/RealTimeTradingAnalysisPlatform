@@ -28,7 +28,8 @@ from datetime import datetime, timedelta, timezone
 from app.features import structure as struct
 from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
 from app.features.regime import classify_regime
-from app.instruments import assert_real_market_symbol
+from app.market_data.closed_bars import interval_seconds
+from app.instruments import FeedDescriptor, assert_feed_matches_instrument
 from app.news.blackout import BlackoutConfig, EconomicEvent, evaluate_blackout
 from app.features.strategy import (
     AssetStrategy,
@@ -90,6 +91,12 @@ class SignalDecision:
     # Stamped on every stored signal so results from different rule sets are
     # never pooled. See strategy.version_string().
     strategy_version: str = ""
+    # Which feed priced the candles behind this decision, and what the
+    # instrument actually is. Spec Phase 2: every signal must record its data
+    # provenance, so a result can never be scored against a different series
+    # than the one it was generated from.
+    data_source: str = ""
+    market_type: str = ""
     # Set only when a directional bias existed (spec section 30: "rejected
     # opportunities") but no expiry cleared the B-grade threshold -- e.g.
     # "Potential CALL, REJECTED". Distinguishes an admin-only rejected
@@ -100,12 +107,13 @@ class SignalDecision:
 
 
 def _staleness_reason(
-    m5_candles: list[dict], now: datetime, max_age_minutes: int
+    m5_candles: list[dict], now: datetime, max_age_minutes: int,
+    entry_timeframe: str = "M5",
 ) -> str | None:
     """None when the newest candle is fresh enough to decide on, otherwise a
     trader-readable explanation of why it isn't.
 
-    Measured from the candle's CLOSE (open_time + 5 min), not its open --
+    Measured from the candle's CLOSE (open_time + one interval), not its open --
     a bar that opened 6 minutes ago closed 1 minute ago and is perfectly
     current. Measuring from open_time would reject healthy data.
     """
@@ -118,7 +126,7 @@ def _staleness_reason(
     if newest_open.tzinfo is None:
         raise ValueError("candle open_time must be timezone-aware (UTC)")
 
-    close_time = newest_open + timedelta(minutes=5)
+    close_time = newest_open + timedelta(seconds=interval_seconds(entry_timeframe))
     age_minutes = (now - close_time).total_seconds() / 60
 
     if age_minutes > max_age_minutes:
@@ -153,6 +161,7 @@ def build_signal(
     now: datetime | None = None,
     *,
     strategy: AssetStrategy | None = None,
+    feed: FeedDescriptor | None = None,
     technical_score_threshold: int | None = None,
     economic_events: list[EconomicEvent] | None = None,
     calendar_available: bool = False,
@@ -182,12 +191,17 @@ def build_signal(
     `calendar_available=True` genuinely means "nothing is scheduled".
     Collapsing them would make an unprotected system look protected.
     """
-    # Refuse broker-synthetic/OTC instruments outright. See app/instruments.py:
-    # analysing real market data and trading a broker-generated series are
-    # unrelated activities, and the result would still render as a confident
-    # graded signal. Raising here (rather than returning NO_TRADE) makes it a
-    # loud configuration error instead of a quiet, plausible-looking one.
-    assert_real_market_symbol(asset)
+    # Provenance gate (see app/instruments.py). The danger is not the symbol,
+    # it is a mismatch: pricing a broker-generated series with a public-market
+    # feed produces a confident, graded signal about a series the user is not
+    # trading. Raising here (rather than returning NO_TRADE) makes it a loud
+    # configuration error instead of a quiet, plausible-looking one.
+    #
+    # `feed=None` keeps every existing real-market caller working, but an OTC
+    # instrument must state its provenance or be refused -- OTC is fail-closed
+    # because for OTC, provenance is the ONLY thing separating a real signal
+    # from a fiction that looks identical.
+    instrument = assert_feed_matches_instrument(asset, feed)
 
     strategy = strategy or default_strategy(asset)
     if technical_score_threshold is not None:
@@ -250,7 +264,7 @@ def build_signal(
             expiry_minutes=None, market_regime="UNSTABLE", regime_reason=stale_reason,
             entry_price=entry_price, session=session,
             reasons=["Market data is not fresh enough to analyse."],
-            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     blackout = evaluate_blackout(economic_events or [], asset, now, blackout_config)
@@ -273,7 +287,7 @@ def build_signal(
             reasons=["Signal generation paused around a high-impact news release."],
             # Timeframes are still reported: during a pause the trader can
             # see what the market looks like, they just get no signal.
-            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     insufficient = [t.timeframe for t in timeframes if t.insufficient_data]
@@ -283,7 +297,7 @@ def build_signal(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Insufficient real history to analyze this asset yet."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
+            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     bull_votes = sum(1 for t in timeframes if t.bias == "BULLISH")
@@ -310,7 +324,7 @@ def build_signal(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Market conditions not strong enough for a high-quality setup."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp,
+            timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     target_bias = _bias_label(proposed_direction)
@@ -362,7 +376,7 @@ def build_signal(
             grade="REJECTED", expiry_minutes=None, market_regime=regime, regime_reason=regime_reason,
             entry_price=entry_price, session=session,
             reasons=["Directional bias present but no expiry scored high enough to act on."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp,
+            timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
             rejected_opportunity_direction=proposed_direction,
         )
 
@@ -387,5 +401,5 @@ def build_signal(
         asset=asset, direction=proposed_direction, technical_score=best.technical_score, grade=best.grade,
         expiry_minutes=best.expiry_minutes, market_regime=regime, regime_reason=regime_reason,
         entry_price=entry_price, session=session, reasons=reasons, warnings=warnings + standing,
-        timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp,
+        timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
     )

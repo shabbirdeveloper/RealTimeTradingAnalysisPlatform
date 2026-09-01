@@ -20,6 +20,7 @@ from app.features.signal_engine import build_signal
 from app.storage.strategy_repository import load_strategy
 from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
+from app.instruments import FeedDescriptor, FeedKind
 from app.market_data.closed_bars import split_closed
 from app.market_data.resilience import RetryPolicy, call_with_retry
 from app.news.factory import build_calendar_provider
@@ -191,16 +192,33 @@ async def run_poll_cycle(
         },
     )
 
-    _run_analysis_cycle(asset)
+    _run_analysis_cycle(asset, provider)
 
 
-def _run_analysis_cycle(asset: Asset) -> None:
+def _run_analysis_cycle(asset: Asset, provider: MarketDataProvider) -> None:
     """Real technical analysis + signal decision from real stored candle
     history (spec sections 6-12), with the news filter applied (section 8).
     Failures here are logged and swallowed -- a feature/signal computation
     problem should never take down candle collection, which is the more
     critical half of this poll cycle.
+
+    `provider` is needed for provenance: the engine records which feed priced
+    the candles behind every decision, and refuses instrument/feed pairs that
+    do not match.
     """
+    # Demo candles are deterministic placeholders, not prices. Aggregation,
+    # storage and health reporting are all worth exercising against them --
+    # signals are not, and a graded signal derived from them would be fiction
+    # rendered as a real result (spec section 50). Skipped explicitly here so
+    # it reads as an intended state, rather than surfacing as a provenance
+    # exception on every cycle.
+    if getattr(provider, "name", "") == "demo":
+        logger.info(
+            "%s: candles stored from the demo provider; signal generation skipped "
+            "(demo data is not market data)", asset.value,
+        )
+        return
+
     try:
         candles_by_timeframe: dict[str, list[dict]] = {}
         for tf in (Timeframe.H4, Timeframe.H1, Timeframe.M15, Timeframe.M5):
@@ -228,11 +246,19 @@ def _run_analysis_cycle(asset: Asset) -> None:
         # and can never be pooled with the tightened config's results.
         loaded = load_strategy(asset)
 
+        # Provenance stated explicitly. This loop only ever handles
+        # public-market instruments (see the note on the Asset enum), so the
+        # descriptor is PUBLIC_MARKET -- and the engine will refuse outright
+        # if an OTC instrument ever reaches here, rather than pricing a
+        # broker-generated series with vendor forex data.
+        feed = FeedDescriptor(name=provider.name, kind=FeedKind.PUBLIC_MARKET)
+
         decision = build_signal(
             asset.value,
             candles_by_timeframe,
             now=now,
             strategy=loaded.strategy,
+            feed=feed,
             economic_events=events,
             calendar_available=calendar_available,
         )

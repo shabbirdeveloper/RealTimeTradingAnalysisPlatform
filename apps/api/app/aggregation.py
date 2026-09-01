@@ -27,17 +27,30 @@ from enum import Enum
 
 
 class Timeframe(str, Enum):
+    # Sub-minute timeframes exist for broker-OTC instruments, which are
+    # traded on 15s-1m horizons. Public-market vendors do not sell sub-minute
+    # data (Twelve Data's floor is 1min), so these are only ever populated
+    # from a tick-level or OTC feed.
+    S15 = "S15"
+    S30 = "S30"
+    M1 = "M1"
+    M3 = "M3"
     M5 = "M5"
     M15 = "M15"
     H1 = "H1"
     H4 = "H4"
 
 
-TIMEFRAME_MINUTES: dict[Timeframe, int] = {
-    Timeframe.M5: 5,
-    Timeframe.M15: 15,
-    Timeframe.H1: 60,
-    Timeframe.H4: 240,
+# Seconds, not minutes -- 15 seconds is not an integer number of minutes.
+TIMEFRAME_SECONDS: dict[Timeframe, int] = {
+    Timeframe.S15: 15,
+    Timeframe.S30: 30,
+    Timeframe.M1: 60,
+    Timeframe.M3: 180,
+    Timeframe.M5: 300,
+    Timeframe.M15: 900,
+    Timeframe.H1: 3600,
+    Timeframe.H4: 14400,
 }
 
 
@@ -63,18 +76,22 @@ class Candle:
 def _bucket_start(dt: datetime, timeframe: Timeframe) -> datetime:
     """Floor a UTC timestamp to the start of its timeframe bucket.
 
-    M5/M15 buckets align to the top of the hour. H1 buckets align to the
-    top of the hour. H4 buckets align to 00:00/04:00/08:00/12:00/16:00/
-    20:00 UTC -- i.e. hour-of-day integer-divided by 4.
+    Anchored to midnight UTC and computed in seconds, which handles every
+    supported timeframe with one expression: S15 buckets land on :00/:15/
+    :30/:45 of each minute, M5/M15 on the usual minute boundaries, H4 on
+    00:00/04:00/.../20:00.
+
+    Anchoring to midnight rather than to the top of the hour matters as
+    soon as a timeframe does not divide the hour evenly. Every timeframe
+    supported today does, so this is identical to the previous hour-anchored
+    logic -- but it stays correct for one that doesn't, instead of silently
+    producing overlapping buckets.
     """
     dt = dt.astimezone(timezone.utc)
-    minutes = TIMEFRAME_MINUTES[timeframe]
-    if minutes < 60:
-        floored_minute = (dt.minute // minutes) * minutes
-        return dt.replace(minute=floored_minute, second=0, microsecond=0)
-    hours = minutes // 60
-    floored_hour = (dt.hour // hours) * hours
-    return dt.replace(hour=floored_hour, minute=0, second=0, microsecond=0)
+    seconds = TIMEFRAME_SECONDS[timeframe]
+    day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = int((dt - day_start).total_seconds())
+    return day_start + timedelta(seconds=(elapsed // seconds) * seconds)
 
 
 def aggregate_candles(
@@ -105,14 +122,14 @@ def aggregate_candles(
     if source_timeframe == target_timeframe:
         raise AggregationError("source and target timeframe must differ")
 
-    source_minutes = TIMEFRAME_MINUTES[source_timeframe]
-    target_minutes = TIMEFRAME_MINUTES[target_timeframe]
-    if target_minutes <= source_minutes or target_minutes % source_minutes != 0:
+    source_seconds = TIMEFRAME_SECONDS[source_timeframe]
+    target_seconds = TIMEFRAME_SECONDS[target_timeframe]
+    if target_seconds <= source_seconds or target_seconds % source_seconds != 0:
         raise AggregationError(
             f"cannot aggregate {source_timeframe} into {target_timeframe}: "
-            f"{target_minutes} is not an exact multiple of {source_minutes}"
+            f"{target_seconds}s is not an exact multiple of {source_seconds}s"
         )
-    expected_count = target_minutes // source_minutes
+    expected_count = target_seconds // source_seconds
 
     buckets: dict[datetime, list[Candle]] = {}
     for candle in source_candles:
@@ -122,7 +139,7 @@ def aggregate_candles(
     results: list[Candle] = []
     for bucket_start, bars in buckets.items():
         bars_sorted = sorted(bars, key=lambda c: c.open_time)
-        bucket_end = bucket_start + timedelta(minutes=target_minutes)
+        bucket_end = bucket_start + timedelta(seconds=target_seconds)
 
         is_complete_set = len(bars_sorted) == expected_count
         is_time_elapsed = now is not None and now >= bucket_end

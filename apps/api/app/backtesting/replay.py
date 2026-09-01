@@ -25,7 +25,27 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-TIMEFRAME_MINUTES: dict[str, int] = {"M5": 5, "M15": 15, "H1": 60, "H4": 240}
+# Durations in SECONDS, not minutes.
+#
+# Quotex OTC is traded on 15-second to 1-minute horizons, and an integer
+# minute cannot express 15 seconds. Every duration table in the codebase was
+# integer minutes, which made sub-minute analysis unrepresentable rather than
+# merely unimplemented -- the kind of constraint that gets discovered halfway
+# through building on top of it.
+#
+# One table, shared by the backtester, the ingestion filter and the
+# aggregator, because two definitions of "how long is a bar" that drift apart
+# is exactly the class of bug the closed-bar work exists to prevent.
+TIMEFRAME_SECONDS: dict[str, int] = {
+    "S15": 15,
+    "S30": 30,
+    "M1": 60,
+    "M3": 180,
+    "M5": 300,
+    "M15": 900,
+    "H1": 3600,
+    "H4": 14400,
+}
 
 
 class ReplayError(ValueError):
@@ -40,12 +60,12 @@ def _require_aware(dt: datetime, label: str) -> None:
 def candle_close_time(candle: dict, timeframe: str) -> datetime:
     """The moment this candle's window ends -- i.e. the earliest time its
     OHLC values could actually be known."""
-    minutes = TIMEFRAME_MINUTES.get(timeframe)
-    if minutes is None:
+    seconds = TIMEFRAME_SECONDS.get(timeframe)
+    if seconds is None:
         raise ReplayError(f"unknown timeframe {timeframe!r}")
     open_time = candle["open_time"]
     _require_aware(open_time, "candle open_time")
-    return open_time + timedelta(minutes=minutes)
+    return open_time + timedelta(seconds=seconds)
 
 
 def candles_closed_by(candles: list[dict], timeframe: str, as_of: datetime) -> list[dict]:
@@ -56,7 +76,7 @@ def candles_closed_by(candles: list[dict], timeframe: str, as_of: datetime) -> l
     slice it repeatedly across the whole replay.
     """
     _require_aware(as_of, "as_of")
-    if timeframe not in TIMEFRAME_MINUTES:
+    if timeframe not in TIMEFRAME_SECONDS:
         raise ReplayError(f"unknown timeframe {timeframe!r}")
     return [c for c in candles if candle_close_time(c, timeframe) <= as_of]
 

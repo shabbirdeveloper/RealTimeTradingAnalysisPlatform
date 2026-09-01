@@ -17,12 +17,17 @@ class Asset(str, Enum):
     XAUUSD = "XAUUSD"
     EURUSD = "EURUSD"
     GBPUSD = "GBPUSD"
-    # Crypto: the only genuinely 24/7 REAL markets available here. Added so
-    # the platform has honest weekend coverage without resorting to a
-    # broker's synthetic "OTC" weekend instruments -- see app/instruments.py
-    # for why those are refused outright.
+    # Crypto: the only genuinely 24/7 REAL markets available here, giving
+    # honest weekend coverage from a public-market feed.
     BTCUSD = "BTCUSD"
     ETHUSD = "ETHUSD"
+
+    # NOTE: broker-OTC instruments are deliberately ABSENT from this enum.
+    # This enum drives the public-market collector loop, and an OTC symbol in
+    # it would make the collector fetch Twelve Data's real EUR/USD and store
+    # it as EURUSD_OTC -- the precise confusion app/instruments.py exists to
+    # prevent. OTC instruments live in the registry (app/instruments.py) and
+    # are collected by a separate OTC feed (app/market_data/otc.py).
 
 
 def is_crypto(asset: Asset) -> bool:

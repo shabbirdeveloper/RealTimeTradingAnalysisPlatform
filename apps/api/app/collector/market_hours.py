@@ -3,10 +3,11 @@ Per-asset "is this market open" check, used only to decide whether the
 collector should bother polling -- NOT the session-detection engine in
 spec section 6/7 (Asian/London/NY), which lives in the feature engine.
 
-Two very different schedules now coexist:
+Two very different schedules coexist:
 
   Forex / gold  -- roughly Sunday ~21:00 UTC through Friday ~22:00 UTC.
-  Crypto        -- genuinely continuous, including weekends and holidays.
+  Continuous    -- crypto (the market never shuts) and broker-OTC (the
+                   generator never stops). Different reasons, same schedule.
 
 Getting this wrong in either direction is bad: polling a closed forex
 market burns API credits for repeated identical candles, while pausing a
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.instruments import is_crypto_symbol
+from app.instruments import trades_continuously
 
 
 def is_market_open(asset: str | None = None, now: datetime | None = None) -> bool:
@@ -31,8 +32,12 @@ def is_market_open(asset: str | None = None, now: datetime | None = None) -> boo
     """
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
-    if asset is not None and is_crypto_symbol(asset):
-        return True  # crypto never closes
+    if asset is not None and trades_continuously(asset):
+        # Crypto, because the market never shuts. Broker-OTC, because the
+        # generator never stops. Read from the instrument registry rather
+        # than special-cased here, so adding a continuous instrument is a
+        # registry entry and not an edit to this function.
+        return True
 
     weekday = now.weekday()  # Monday=0 ... Sunday=6
     if weekday == 5:  # Saturday: always closed

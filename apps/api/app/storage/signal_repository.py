@@ -121,6 +121,12 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
         # different rules and pooling them would credit a tuning change with
         # an improvement it did not cause.
         "strategy_version": decision.strategy_version or None,
+        # Which feed priced the candles behind this row, and what kind of
+        # instrument it is. Spec Phase 2/18: resolution must score a signal
+        # against the SAME series that generated it, and that is only
+        # checkable if the series is recorded here.
+        "data_source": decision.data_source or None,
+        "market_type": decision.market_type or None,
         "model_version_id": None,
         "status": status,
         "session": decision.session,

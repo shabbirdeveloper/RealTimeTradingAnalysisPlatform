@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.aggregation import (
@@ -130,3 +130,72 @@ class TestMisuse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubMinuteTimeframes(unittest.TestCase):
+    """Broker-OTC instruments are traded on 15s-1m horizons. Every duration
+    table used to be integer minutes, which made these unrepresentable rather
+    than merely unimplemented."""
+
+    def test_second_buckets_align_within_the_minute(self):
+        t = dt(12, 7).replace(second=38)
+        self.assertEqual(_bucket_start(t, Timeframe.S15), dt(12, 7).replace(second=30))
+        self.assertEqual(_bucket_start(t, Timeframe.S30), dt(12, 7).replace(second=30))
+        self.assertEqual(_bucket_start(t, Timeframe.M1), dt(12, 7))
+        self.assertEqual(_bucket_start(t, Timeframe.M3), dt(12, 6))
+
+    def test_bucket_start_is_unchanged_for_every_existing_timeframe(self):
+        """The seconds refactor must not move a single existing bucket, or
+        every stored candle silently re-buckets and history becomes
+        incomparable with itself."""
+        def hour_anchored(when, minutes):
+            if minutes < 60:
+                return when.replace(minute=(when.minute // minutes) * minutes, second=0, microsecond=0)
+            hours = minutes // 60
+            return when.replace(hour=(when.hour // hours) * hours, minute=0, second=0, microsecond=0)
+
+        for hour in range(0, 24, 3):
+            for minute in (0, 7, 14, 29, 44, 59):
+                when = dt(hour, minute).replace(second=41)
+                for timeframe, minutes in (
+                    (Timeframe.M5, 5), (Timeframe.M15, 15),
+                    (Timeframe.H1, 60), (Timeframe.H4, 240),
+                ):
+                    self.assertEqual(
+                        _bucket_start(when, timeframe),
+                        hour_anchored(when, minutes),
+                        f"{timeframe} moved at {when}",
+                    )
+
+    def test_aggregating_s15_into_m1_needs_four_bars(self):
+        start = dt(12, 0)
+        bars = [
+            Candle(open_time=start + timedelta(seconds=15 * i),
+                   open=Decimal("1.1"), high=Decimal("1.2"),
+                   low=Decimal("1.0"), close=Decimal("1.15"))
+            for i in range(4)
+        ]
+        result = aggregate_candles(bars, Timeframe.S15, Timeframe.M1)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].open_time, start)
+
+    def test_a_partial_second_bucket_is_not_emitted(self):
+        start = dt(12, 0)
+        bars = [
+            Candle(open_time=start + timedelta(seconds=15 * i),
+                   open=Decimal("1.1"), high=Decimal("1.2"),
+                   low=Decimal("1.0"), close=Decimal("1.15"))
+            for i in range(3)  # three of the four 15s bars in the minute
+        ]
+        self.assertEqual(aggregate_candles(bars, Timeframe.S15, Timeframe.M1), [])
+
+    def test_s30_into_m3_is_a_valid_pairing(self):
+        """180s / 30s = 6 exactly, so this must be allowed -- guarding against
+        an over-eager multiple check that rejects legitimate second pairings."""
+        self.assertEqual(aggregate_candles([], Timeframe.S30, Timeframe.M3), [])
+
+    def test_a_non_multiple_pairing_is_still_rejected(self):
+        """M3 into M5: 300s is not a whole number of 180s buckets, so the bars
+        would not line up. Rejected loudly rather than silently mis-bucketed."""
+        with self.assertRaises(AggregationError):
+            aggregate_candles([], Timeframe.M3, Timeframe.M5)
