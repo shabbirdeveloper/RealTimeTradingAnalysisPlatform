@@ -104,38 +104,72 @@ if inactive:
 
 # ------------------------------------------------------------- 3. migrations
 head("3. Schema / migrations")
-REQUIRED = {
-    "last_evaluated_at": "14",
-    "shadow_result": "14",
-    "strategy_version": "15",
-    "data_source": "16",
-    "expiry_seconds": "16",
-}
-missing: list[tuple[str, str]] = []
-for column, migration in REQUIRED.items():
+
+# Each probe is a cheap read that only succeeds once its migration has run.
+# Probing per-migration rather than per-column matters: migrations can be
+# applied OUT OF ORDER, and then "some columns exist" tells you nothing about
+# which file still needs running.
+def has_column(table: str, column: str) -> bool:
     try:
-        client.table("signals").select(column).limit(1).execute()
-        line(OK, f"signals.{column}")
+        client.table(table).select(column).limit(1).execute()
+        return True
     except Exception:  # noqa: BLE001
-        line(BAD, f"signals.{column} — MISSING (migration {migration})")
-        missing.append((column, migration))
+        return False
 
-try:
-    client.table("strategy_configs").select("expiry_seconds").limit(1).execute()
-    line(OK, "strategy_configs.expiry_seconds")
-except Exception:  # noqa: BLE001
-    line(BAD, "strategy_configs.expiry_seconds — MISSING (migration 15 and/or 17)")
-    missing.append(("strategy_configs.expiry_seconds", "15/17"))
 
-if missing:
+def has_function(name: str) -> bool:
+    try:
+        client.rpc(name, {}).execute()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        # A permission or argument error still proves the function exists;
+        # only "does not exist" means the migration has not run.
+        return "does not exist" not in str(exc).lower()
+
+
+PROBES = [
+    ("20260830000011_seed_crypto_assets",
+     lambda: any(a["symbol"] == "BTCUSD" for a in assets)),
+    ("20260830000012_notification_prefs_crypto",
+     lambda: has_column("notification_preferences", "btcusd_enabled")),
+    ("20260830000013_admin_list_users",
+     lambda: has_function("admin_list_users")),
+    ("20260830000014_dedup_and_shadow_resolution",
+     lambda: has_column("signals", "last_evaluated_at") and has_column("signals", "shadow_result")),
+    ("20260830000015_strategy_configs",
+     lambda: has_column("strategy_configs", "min_technical_score")),
+    ("20260830000016_otc_instruments_and_provenance",
+     lambda: has_column("signals", "data_source") and has_column("assets", "market_type")),
+    ("20260830000017_expiry_seconds",
+     lambda: has_column("strategy_configs", "expiry_seconds")),
+]
+
+pending: list[str] = []
+for name, probe in PROBES:
+    try:
+        applied = probe()
+    except Exception:  # noqa: BLE001
+        applied = False
+    line(OK if applied else BAD, f"{name}  {'applied' if applied else 'NOT APPLIED'}")
+    if not applied:
+        pending.append(name)
+
+# 10 adds a constraint, which PostgREST cannot see. Named as unverifiable
+# rather than assumed either way -- it is safe to re-run regardless.
+line(INFO, "20260830000010_economic_events_unique  (constraint — cannot verify from here; safe to re-run)")
+
+if pending:
+    numbered = "\n".join(f"    {i}. {name}.sql" for i, name in enumerate(pending, 1))
     halt(
-        f"{len(missing)} schema change(s) not applied",
+        f"{len(pending)} migration(s) not applied",
         "Every signal write fails on a missing column, which looks exactly like\n"
-        "'no signals'. Apply the migrations in supabase/migrations/ in filename\n"
-        "order, in the Supabase SQL editor.\n"
-        "  * Run 20260830000016 ON ITS OWN — Postgres cannot use a new enum value\n"
-        "    in the same transaction that adds it.\n"
-        "  * Restart the API afterwards.",
+        "'no signals'. Run these files from supabase/migrations/, IN THIS ORDER,\n"
+        "in the Supabase SQL editor:\n\n"
+        f"{numbered}\n\n"
+        "Run each file as a SEPARATE query — paste one, run it, then the next.\n"
+        "(A migration already applied is safe to re-run; they are written to be\n"
+        "idempotent. Order still matters: later files depend on earlier tables.)\n\n"
+        "Then restart the API.",
     )
 
 # ---------------------------------------------------------------- 4. candles
