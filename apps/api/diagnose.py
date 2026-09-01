@@ -329,7 +329,52 @@ line(INFO, "all decisions so far: " + (", ".join(f"{k}={v}" for k, v in sorted(c
 line(INFO, f"strategy version in use: {sig[0].get('strategy_version') or 'unstamped'}")
 
 # --------------------------------------------------------------- 7. failures
-head("8. Recorded failures (last 24h)")
+head("8. Score distribution — is the threshold in the right place?")
+
+# The single most informative view once decisions start flowing. A threshold
+# is only meaningful relative to the scores the engine actually produces: 78
+# is strict if scores cluster at 70, and irrelevant if they cluster at 20.
+# Neither the count of signals nor the count of NO_TRADEs tells you which.
+scored = (
+    client.table("signals")
+    .select("technical_score, status, direction, asset_id, shadow_result, result")
+    .gt("technical_score", 0)
+    .order("generated_at", desc=True).limit(2000).execute().data or []
+)
+
+if not scored:
+    line(INFO, "no scored opportunities yet — this fills in as directional setups appear")
+else:
+    values = sorted(row["technical_score"] for row in scored)
+    buckets = [(0, 20), (20, 40), (40, 60), (60, 70), (70, 78), (78, 85), (85, 101)]
+    widest = max(sum(1 for v in values if lo <= v < hi) for lo, hi in buckets) or 1
+
+    line(INFO, f"{len(values)} scored opportunities  (min {values[0]}, "
+               f"median {values[len(values) // 2]}, max {values[-1]})")
+    print()
+    for lo, hi in buckets:
+        count = sum(1 for v in values if lo <= v < hi)
+        bar = "#" * round(20 * count / widest)
+        mark = "  <- accepted" if lo >= 78 else ""
+        print(f"    {lo:>3}-{hi - 1:<3} {count:>5}  {bar}{mark}")
+
+    print()
+    for threshold in (60, 65, 70, 74, 78, 82):
+        passing = sum(1 for v in values if v >= threshold)
+        share = 100 * passing / len(values)
+        flag = "  (current)" if threshold == 78 else ""
+        print(f"    threshold {threshold}: {passing:>5} would fire  ({share:.1f}%){flag}")
+
+    if values[-1] < 78:
+        print()
+        line(WARN, "NOTHING has reached the current threshold yet.")
+        line(INFO, "That is not necessarily wrong — a quiet, range-bound market genuinely")
+        line(INFO, "offers few good setups. But if it persists across sessions and regimes,")
+        line(INFO, "the bar is set above what this engine can score rather than above what")
+        line(INFO, "a good setup looks like. Shadow resolution (section 9) is what settles")
+        line(INFO, "it: it records how the rejected setups would have turned out.")
+
+head("9. Recorded failures (last 24h)")
 since = (now - timedelta(days=1)).isoformat()
 fails = (
     client.table("audit_logs")
@@ -346,7 +391,7 @@ else:
         line(BAD, f"{when}  {f['action']:<20} {f.get('target_id', '')}  {err}")
 
 # ------------------------------------------------------------ 8. resolution
-head("9. Resolution (are outcomes being scored?)")
+head("10. Resolution (are outcomes being scored?)")
 resolved = client.table("signals").select("result", count="exact").not_.is_("result", "null").execute()
 pending = (
     client.table("signals").select("expiry_at", count="exact")
