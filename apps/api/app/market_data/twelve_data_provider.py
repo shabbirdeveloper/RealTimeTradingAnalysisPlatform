@@ -119,7 +119,7 @@ class TwelveDataProvider(MarketDataProvider):
 
         if response.status_code != 200 or payload.get("status") == "error":
             message = payload.get("message", f"HTTP {response.status_code}")
-            if response.status_code >= 500:
+            if response.status_code >= 500 or _is_service_outage(message):
                 raise TransientMarketDataError(f"Twelve Data error for {symbol}: {message}")
             # 4xx: a bad key, an unknown symbol, a malformed request. The same
             # call will fail identically forever, and each attempt still spends
@@ -194,3 +194,29 @@ def _raise_for_payload_rate_limit(payload: dict, symbol: str) -> None:
             f"Twelve Data rate limit hit for {symbol}: "
             f"{payload.get('message', 'plan limit reached')}"
         )
+
+
+# Twelve Data reports some of its OWN outages in a 200 body -- e.g.
+# "Quota API is not available", which is their quota SERVICE being down, not
+# the account being out of credits. Those arrived on all five assets at once
+# and cleared minutes later, but were classified as permanent (only 5xx was
+# retried), so every asset silently lost that cycle to something a single
+# retry would very likely have survived.
+#
+# Deliberately narrow. Genuine credit exhaustion says "run out of API
+# credits" or returns 429, and is handled by the rate-limit path with proper
+# backoff -- retrying THAT would spend the credits it is complaining about.
+_SERVICE_OUTAGE_PHRASES = (
+    "is not available",
+    "temporarily unavailable",
+    "try again",
+    "internal error",
+    "service unavailable",
+)
+
+
+def _is_service_outage(message: str) -> bool:
+    text = (message or "").lower()
+    if "credit" in text or "limit" in text or "upgrade" in text:
+        return False  # a quota complaint, not an outage — do not retry into it
+    return any(phrase in text for phrase in _SERVICE_OUTAGE_PHRASES)
