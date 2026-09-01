@@ -74,12 +74,28 @@ def main() -> None:
     print("No look-ahead: each decision sees only candles closed at that moment.\n")
 
     history = {}
+    suspicious = []
     for asset in assets:
         loaded = load_history(asset, start, end)
-        bars = len(loaded.get("M5", []))
-        print(f"  {asset.value:<8} {bars:>6} M5 bars")
-        if bars:
+        counts = {tf: len(bars) for tf, bars in loaded.items()}
+        m5 = counts.get("M5", 0)
+        print(f"  {asset.value:<8} {m5:>6} M5   "
+              f"{counts.get('M15', 0):>5} M15   {counts.get('H1', 0):>5} H1   "
+              f"{counts.get('H4', 0):>4} H4")
+        # A count sitting exactly on a page boundary is the signature of a
+        # truncated read, not of history that happened to end there. This
+        # already cost one sweep: 15,000 stored bars came back as 1,000, every
+        # decision hit "insufficient history", and the run printed a clean
+        # table of zeroes that read like a finding about the strategy.
+        if m5 and m5 % 1000 == 0:
+            suspicious.append(f"{asset.value} ({m5})")
+        if m5:
             history[asset.value] = loaded
+
+    if suspicious:
+        print(f"\n  WARNING: exact multiples of 1000 bars for {', '.join(suspicious)}.")
+        print("  That is the shape of a capped query, not of real history. Results below")
+        print("  may be measuring a truncated read rather than your data.")
 
     if not history:
         print("\nNo history in that window. Run backfill.py --run first.")
@@ -100,8 +116,10 @@ def main() -> None:
         share = 100 * taken / summary.total_opportunities if summary.total_opportunities else 0.0
 
         if resolved == 0:
+            why = ("no setups at all — check the bar counts above"
+                   if summary.total_opportunities == 0 else "nothing resolved")
             print(f"{threshold:>7} {summary.total_opportunities:>7} {taken:>7} {share:>6.1f}% "
-                  f"{'—':>5} {'—':>5} {'—':>9} {'—':>16}  nothing resolved")
+                  f"{'—':>5} {'—':>5} {'—':>9} {'—':>16}  {why}")
             continue
 
         rate = 100 * summary.wins / resolved

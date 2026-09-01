@@ -25,6 +25,44 @@ logger = logging.getLogger(__name__)
 _WARMUP = timedelta(days=55)
 
 
+# PostgREST caps every response server-side, and Supabase ships that cap at
+# 1000 rows. `.limit(20000)` does NOT raise it -- the server silently returns
+# 1000 and the client has no idea it was truncated.
+#
+# That silence is the dangerous part. The backtester asked for 15,000 M5 bars,
+# received 1,000, derived ~20 H4 bars from them, and so every replayed decision
+# hit "insufficient history" and produced zero opportunities. The sweep printed
+# a clean table of zeroes that looked like a finding about the strategy rather
+# than a truncated read.
+_PAGE = 1000
+
+
+def _fetch_all(client, asset_id: str, timeframe: str, since: str, until: str) -> list[dict]:
+    """Every matching row, paged past the server cap.
+
+    Stops on a short page: fewer rows than requested means the last one.
+    """
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        response = (
+            client.table("candles")
+            .select("open_time, open, high, low, close")
+            .eq("asset_id", asset_id)
+            .eq("timeframe", timeframe)
+            .gte("open_time", since)
+            .lte("open_time", until)
+            .order("open_time", desc=False)
+            .range(offset, offset + _PAGE - 1)
+            .execute()
+        )
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < _PAGE:
+            return rows
+        offset += _PAGE
+
+
 def load_history(asset: Asset, start: datetime, end: datetime) -> dict[str, list[dict]]:
     """Candles for one asset across all four timeframes, oldest-first.
 
@@ -37,16 +75,10 @@ def load_history(asset: Asset, start: datetime, end: datetime) -> dict[str, list
     history: dict[str, list[dict]] = {}
 
     for timeframe in (Timeframe.M5, Timeframe.M15, Timeframe.H1, Timeframe.H4):
-        response = (
-            client.table("candles")
-            .select("open_time, open, high, low, close")
-            .eq("asset_id", asset_id)
-            .eq("timeframe", timeframe.value)
-            .gte("open_time", (start - _WARMUP).isoformat())
-            .lte("open_time", (end + timedelta(hours=2)).isoformat())
-            .order("open_time", desc=False)
-            .limit(20000)
-            .execute()
+        rows = _fetch_all(
+            client, asset_id, timeframe.value,
+            (start - _WARMUP).isoformat(),
+            (end + timedelta(hours=2)).isoformat(),
         )
         history[timeframe.value] = [
             {
@@ -56,7 +88,7 @@ def load_history(asset: Asset, start: datetime, end: datetime) -> dict[str, list
                 "low": float(row["low"]),
                 "close": float(row["close"]),
             }
-            for row in (response.data or [])
+            for row in rows
         ]
 
     return history
