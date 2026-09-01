@@ -205,3 +205,42 @@ class BackoffIsJittered(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ErrorsMustSayWhatWentWrong(unittest.TestCase):
+    """A live log line read:
+
+        Twelve Data request failed for GBP/USD:
+
+    ...and stopped there. str() on several httpx errors (ReadTimeout,
+    ConnectTimeout, RemoteProtocolError) is empty, so the message named the
+    asset and then said nothing about the failure. For a transient error you
+    only see in a log after the fact, the class name IS the diagnosis.
+    """
+
+    @staticmethod
+    def describe(exc: Exception) -> str:
+        return f"{type(exc).__name__}{f' — {exc}' if str(exc) else ' (no detail)'}"
+
+    def test_an_exception_with_no_message_still_names_its_type(self):
+        class ReadTimeout(Exception):
+            pass
+
+        described = self.describe(ReadTimeout(""))
+        self.assertIn("ReadTimeout", described)
+        self.assertNotEqual(described.strip().rstrip(":"), "")
+
+    def test_a_message_is_kept_when_there_is_one(self):
+        class ConnectError(Exception):
+            pass
+
+        described = self.describe(ConnectError("connection reset by peer"))
+        self.assertIn("ConnectError", described)
+        self.assertIn("connection reset by peer", described)
+
+    def test_the_description_is_never_empty(self):
+        class Weird(Exception):
+            def __str__(self) -> str:
+                return ""
+
+        self.assertTrue(self.describe(Weird()).strip())

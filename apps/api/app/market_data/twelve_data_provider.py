@@ -88,8 +88,15 @@ class TwelveDataProvider(MarketDataProvider):
         except httpx.HTTPError as exc:
             # Connection refused, DNS failure, timeout -- the request never
             # got an answer, so it is worth one more try.
+            #
+            # str() on several httpx errors (ReadTimeout, ConnectTimeout,
+            # RemoteProtocolError) is EMPTY, which produced log lines ending
+            # in a bare colon -- an error report that named the asset and
+            # then said nothing about what went wrong. The class name is the
+            # diagnosis in those cases, so it is always included.
             raise TransientMarketDataError(
-                f"Twelve Data request failed for {symbol}: {exc}"
+                f"Twelve Data request failed for {symbol}: "
+                f"{type(exc).__name__}{f' — {exc}' if str(exc) else ' (no detail)'}"
             ) from exc
 
         _raise_for_rate_limit(response, symbol)
