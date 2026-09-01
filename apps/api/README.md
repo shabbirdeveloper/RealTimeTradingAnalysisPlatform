@@ -81,6 +81,24 @@ uvicorn app.main:app --reload
 
 Then check `http://127.0.0.1:8000/health`.
 
+## Warming up the engine (backfill)
+
+The engine needs 250 bars per timeframe before it will analyse one. The live
+collector adds ~12 M5 bars an hour, so H4 would take about 41 days to reach
+that on its own. This fetches the history in one pass:
+
+```bash
+.venv\Scripts\python.exe backfill.py          # preview — spends no credits
+.venv\Scripts\python.exe backfill.py --run    # fetch and store
+```
+
+Only M5 is fetched; M15/H1/H4 are derived from it by the same aggregation the
+live collector uses. Requesting each timeframe from the provider directly
+would be four times cheaper and would mix two differently-built series in one
+table — a provider's H4 uses its own bucket conventions, which need not match
+ours, and the mismatch would surface later as a backtest that quietly
+disagrees with live.
+
 ## Checking whether signals are working
 
 ```bash

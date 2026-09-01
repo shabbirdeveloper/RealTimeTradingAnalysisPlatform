@@ -50,6 +50,23 @@ class TwelveDataProvider(MarketDataProvider):
         self._timeout = timeout_seconds
 
     async def fetch_latest_m5(self, asset: Asset, outputsize: int) -> list[Candle]:
+        return await self._fetch_m5(asset, outputsize)
+
+    async def fetch_m5_before(
+        self, asset: Asset, end_time: datetime, outputsize: int
+    ) -> list[Candle]:
+        """One page of M5 history ending at `end_time`, for backfill.
+
+        Separate from fetch_latest_m5 rather than an optional argument on it,
+        because the two have different failure semantics: the live poll must
+        never silently reach into the past, and a backfill page returning
+        nothing means "history ends here", not "the feed is broken".
+        """
+        return await self._fetch_m5(asset, outputsize, end_time=end_time)
+
+    async def _fetch_m5(
+        self, asset: Asset, outputsize: int, *, end_time: datetime | None = None
+    ) -> list[Candle]:
         symbol = _SYMBOL_MAP[asset]
         params = {
             "symbol": symbol,
@@ -61,6 +78,10 @@ class TwelveDataProvider(MarketDataProvider):
             "timezone": "UTC",
             "apikey": self._api_key,
         }
+        if end_time is not None:
+            # Twelve Data returns the `outputsize` bars ENDING at this
+            # timestamp, so paging backwards means walking this value down.
+            params["end_date"] = end_time.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.get(_BASE_URL, params=params)
