@@ -2,7 +2,8 @@ import { ASSET_LIST, ASSET_CONFIGS } from "@/data/assets";
 import { AssetSignalCard } from "@/components/dashboard/asset-signal-card";
 import { DataStatusPill } from "@/components/shared/badges";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { PERFORMANCE_SUMMARY } from "@/data/history";
+import { getRealPerformanceSummary } from "@/lib/performance";
+import { breakEvenWinRate, wilsonInterval } from "@/lib/statistics";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshots } from "@/lib/market-data";
 import { getLatestSignals } from "@/lib/signals";
@@ -18,13 +19,39 @@ export const dynamic = "force-dynamic"; // always read the latest price + signal
  * real CALL/PUT/NO_TRADE decisions with a genuine technical score --
  * never a fabricated ML confidence (Phase 6 doesn't exist yet, so
  * `signal.confidence` stays null and grade is capped at B/REJECTED, per
- * spec section 10). The accuracy/streak stat tiles below are still the
- * demo performance engine -- meaningful accuracy stats need real
- * resolved-signal history to accumulate first (spec section 49
- * resolution job isn't built yet), so those stay clearly labeled rather
- * than computed from a handful of untested signals.
+ * spec section 10).
+ *
+ * The stat tiles are computed from REAL resolved signals only. They used
+ * to render the demo performance engine's numbers with "(demo)" appended,
+ * which was honest but useless: a fabricated 71% is not a smaller version
+ * of a real one, and a headline figure invites being read as real however
+ * it is labelled. Now the resolution job exists, so the tiles show what
+ * has actually resolved -- including "nothing yet", which is a true
+ * answer and the correct one on day one.
  */
 export default async function DashboardHomePage() {
+  const summary = await getRealPerformanceSummary();
+  const wins = summary?.wins ?? 0;
+  const losses = summary?.losses ?? 0;
+  const decided = wins + losses;
+  const accuracy = decided > 0 ? Math.round((wins / decided) * 1000) / 10 : 0;
+  const ci = decided > 0 ? wilsonInterval(wins, decided) : null;
+  const breakEven = Math.round(breakEvenWinRate(80) * 10) / 10;
+
+  // The verdict reads the LOWER interval bound against break-even, never the
+  // point estimate. A 62% win rate on 20 trades spans roughly 41-79%, which
+  // is not evidence of an edge -- and a dashboard that calls that "profitable"
+  // is the exact failure this project set out not to have.
+  const verdict =
+    decided < 30 ? "Too early"
+    : ci!.low > breakEven ? "Profitable"
+    : ci!.high < breakEven ? "Losing"
+    : "Unproven";
+  const verdictClass =
+    verdict === "Profitable" ? "text-call"
+    : verdict === "Losing" ? "text-put"
+    : "text-muted-foreground";
+
   const [snapshots, signals] = await Promise.all([getAssetPriceSnapshots(), getLatestSignals()]);
 
   return (
@@ -52,23 +79,37 @@ export default async function DashboardHomePage() {
           index={0}
           icon={Target}
           label="Overall accuracy"
-          value={<AnimatedNumber value={PERFORMANCE_SUMMARY.overallAccuracy} suffix="%" />}
-          sub={`${PERFORMANCE_SUMMARY.totalSignals} resolved signals (demo)`}
+          value={
+            decided > 0
+              ? <AnimatedNumber value={accuracy} suffix="%" />
+              : <span className="text-muted-foreground">—</span>
+          }
+          sub={
+            decided > 0
+              ? `${decided} resolved · 95% CI ${ci!.low.toFixed(0)}\u2013${ci!.high.toFixed(0)}%`
+              : "No signals resolved yet"
+          }
         />
         <StatTile
           index={1}
           icon={Award}
-          label="A++ accuracy"
-          value={<AnimatedNumber value={PERFORMANCE_SUMMARY.aPlusPlusAccuracy} suffix="%" />}
-          sub={`${PERFORMANCE_SUMMARY.aPlusPlusSignals} A++ signals (demo)`}
+          label="Break-even"
+          value={<AnimatedNumber value={breakEven} suffix="%" />}
+          sub="Needed at an 80% payout"
           accent
         />
         <StatTile
           index={2}
           icon={TrendingUp}
-          label="Current streak"
-          value={`${PERFORMANCE_SUMMARY.currentStreak.count} ${PERFORMANCE_SUMMARY.currentStreak.type}`}
-          sub={`Max win streak ${PERFORMANCE_SUMMARY.maxWinStreak} (demo)`}
+          label="Verdict"
+          value={
+            <span className={verdictClass}>{verdict}</span>
+          }
+          sub={
+            decided > 0
+              ? `${summary?.wins ?? 0}W / ${summary?.losses ?? 0}L`
+              : "Needs ~30 resolved to say anything"
+          }
         />
       </div>
 
