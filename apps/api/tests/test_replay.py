@@ -215,3 +215,49 @@ class TestNoLookAheadBias(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SliceOrderContract(unittest.TestCase):
+    """candles_closed_by binary-searches, so oldest-first is now load-bearing
+    rather than merely documented. The linear scan it replaced tolerated
+    newest-first input and returned something plausible — which is the worse
+    failure, because nothing announced it."""
+
+    def _series(self, count: int = 50):
+        base = datetime(2026, 8, 24, 0, 0, tzinfo=UTC)
+        return [candle(base + timedelta(minutes=5 * i)) for i in range(count)]
+
+    def test_newest_first_input_is_refused(self):
+        with self.assertRaises(replay.ReplayError) as ctx:
+            replay.candles_closed_by(
+                list(reversed(self._series())), "M5",
+                datetime(2026, 8, 24, 2, 0, tzinfo=UTC),
+            )
+        self.assertIn("oldest-first", str(ctx.exception))
+
+    def test_a_single_candle_is_not_treated_as_misordered(self):
+        one = self._series(1)
+        self.assertEqual(
+            replay.candles_closed_by(one, "M5", datetime(2026, 8, 25, tzinfo=UTC)), one
+        )
+
+    def test_an_empty_list_is_fine(self):
+        self.assertEqual(
+            replay.candles_closed_by([], "M5", datetime(2026, 8, 25, tzinfo=UTC)), []
+        )
+
+    def test_the_bisect_agrees_with_a_linear_scan_everywhere(self):
+        """The optimisation must be invisible in the results. Only the cost
+        was allowed to change."""
+        series = self._series(200)
+        for i in range(-2, 205):
+            as_of = datetime(2026, 8, 24, 0, 0, tzinfo=UTC) + timedelta(minutes=5 * i)
+            for timeframe in ("M5", "M15", "H1"):
+                expected = [
+                    c for c in series
+                    if replay.candle_close_time(c, timeframe) <= as_of
+                ]
+                self.assertEqual(
+                    replay.candles_closed_by(series, timeframe, as_of), expected,
+                    f"{timeframe} at {as_of}",
+                )

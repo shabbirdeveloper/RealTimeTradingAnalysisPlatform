@@ -101,32 +101,56 @@ def main() -> None:
         print("\nNo history in that window. Run backfill.py --run first.")
         sys.exit(1)
 
-    print(f"\n{'thresh':>7} {'setups':>7} {'taken':>7} {'share':>7} "
+    # ONE replay, not one per threshold.
+    #
+    # The threshold only decides whether a scored setup is accepted; it does
+    # not change the score, the direction, the chosen expiry or the outcome.
+    # (`best` is the highest-scoring eligible candidate, and the highest
+    # scorer is the same candidate whenever it clears at all.) So replaying
+    # per threshold recomputed identical decisions eight times over -- and a
+    # 14-day sweep was slow enough to have to be interrupted.
+    #
+    # Replay once at a floor of 1, then count how many of those opportunities
+    # each threshold would have taken. Identical results, an eighth of the work.
+    print("\nReplaying once, then applying each threshold to the result...")
+    summary = run_backtest(
+        history, start=start, end=end,
+        technical_score_threshold=1, step_minutes=args.step,
+    )
+    scored = [o for o in summary.opportunities if o.technical_score > 0]
+    print(f"{len(scored)} scored setups found.\n")
+
+    if not scored:
+        print("No directional setups at all in this window. That is a finding about")
+        print("the timeframe-agreement rule, not about the threshold: nothing ever")
+        print("reached the scoring stage.\n")
+        return
+
+    top = max(o.technical_score for o in scored)
+    print(f"{'thresh':>7} {'setups':>7} {'taken':>7} {'share':>7} "
           f"{'W':>5} {'L':>5} {'win rate':>9} {'95% interval':>16}  verdict")
     print("-" * 88)
 
     breakeven = 100 / (1 + PAYOUT)
     for threshold in THRESHOLDS:
-        summary = run_backtest(
-            history, start=start, end=end,
-            technical_score_threshold=threshold, step_minutes=args.step,
-        )
-        taken = summary.accepted_signals
-        resolved = summary.wins + summary.losses
-        share = 100 * taken / summary.total_opportunities if summary.total_opportunities else 0.0
+        taken_all = [o for o in scored if o.technical_score >= threshold]
+        wins = sum(1 for o in taken_all if o.result == "WON")
+        losses = sum(1 for o in taken_all if o.result == "LOST")
+        resolved = wins + losses
+        share = 100 * len(taken_all) / len(scored)
+        marker = " *" if threshold == 78 else "  "
 
         if resolved == 0:
-            why = ("no setups at all — check the bar counts above"
-                   if summary.total_opportunities == 0 else "nothing resolved")
-            print(f"{threshold:>7} {summary.total_opportunities:>7} {taken:>7} {share:>6.1f}% "
+            why = "nothing scored this high" if not taken_all else "none resolved yet"
+            print(f"{threshold:>7}{marker}{len(scored):>5} {len(taken_all):>7} {share:>6.1f}% "
                   f"{'—':>5} {'—':>5} {'—':>9} {'—':>16}  {why}")
             continue
 
-        rate = 100 * summary.wins / resolved
-        lo, hi = wilson(summary.wins, resolved)
+        rate = 100 * wins / resolved
+        lo, hi = wilson(wins, resolved)
 
-        # The only verdict that matters: is the LOWER bound above break-even?
-        # A point estimate above it proves nothing when the interval spans it.
+        # The verdict reads the LOWER bound against break-even. A point
+        # estimate above it proves nothing when the interval spans it.
         if resolved < 30:
             verdict = "sample too small"
         elif lo > breakeven:
@@ -136,15 +160,16 @@ def main() -> None:
         else:
             verdict = "indistinguishable from break-even"
 
-        marker = " *" if threshold == 78 else "  "
-        print(f"{threshold:>7}{marker}{summary.total_opportunities:>5} {taken:>7} {share:>6.1f}% "
-              f"{summary.wins:>5} {summary.losses:>5} {rate:>8.1f}% "
+        print(f"{threshold:>7}{marker}{len(scored):>5} {len(taken_all):>7} {share:>6.1f}% "
+              f"{wins:>5} {losses:>5} {rate:>8.1f}% "
               f"{lo:>6.1f}-{hi:<6.1f}  {verdict}")
 
     print("-" * 88)
     print(f"  * = the threshold the engine is running now")
     print(f"  Break-even at an {PAYOUT:.0%} payout is {breakeven:.1f}%. Anything below that")
     print(f"  loses money no matter how good the win rate looks next to 50%.")
+    print()
+    print(f"  Highest score anything reached in this window: {top}/100.")
     print()
     print("  Judge a row by whether its LOWER interval bound clears break-even, not by")
     print("  its win rate. Fewer than ~30 resolved signals cannot show anything either way,")

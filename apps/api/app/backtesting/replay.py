@@ -76,9 +76,45 @@ def candles_closed_by(candles: list[dict], timeframe: str, as_of: datetime) -> l
     slice it repeatedly across the whole replay.
     """
     _require_aware(as_of, "as_of")
-    if timeframe not in TIMEFRAME_SECONDS:
+    seconds = TIMEFRAME_SECONDS.get(timeframe)
+    if seconds is None:
         raise ReplayError(f"unknown timeframe {timeframe!r}")
-    return [c for c in candles if candle_close_time(c, timeframe) <= as_of]
+
+    # Binary search, not a scan. `candles` is oldest-first and close time is
+    # monotonic in open time, so the cut point is findable in O(log n).
+    #
+    # This is the backtester's hottest line by a wide margin: it runs once per
+    # timeframe per decision point, and a 14-day sweep over 15,000 bars made it
+    # roughly 400 million comparisons -- enough that a sweep had to be
+    # interrupted rather than waited out. The result is identical; only the
+    # cost changes.
+    duration = timedelta(seconds=seconds)
+
+    # Endpoint check, O(1). The scan this replaced happened to tolerate
+    # newest-first input and return something plausible; bisect cannot, and
+    # silently returning the wrong slice would be far worse than refusing.
+    # Only the endpoints are compared -- verifying full sortedness every call
+    # would cost exactly the O(n) the bisect exists to avoid.
+    if len(candles) > 1:
+        first, last = candles[0]["open_time"], candles[-1]["open_time"]
+        if first.tzinfo is None or last.tzinfo is None:
+            raise ReplayError("candle open_time must be timezone-aware (UTC)")
+        if first > last:
+            raise ReplayError(
+                "candles must be oldest-first; this list is newest-first"
+            )
+
+    lo, hi = 0, len(candles)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        open_time = candles[mid]["open_time"]
+        if open_time.tzinfo is None:
+            raise ReplayError("candle open_time must be timezone-aware (UTC)")
+        if open_time + duration <= as_of:
+            lo = mid + 1
+        else:
+            hi = mid
+    return candles[:lo]
 
 
 def slice_history(

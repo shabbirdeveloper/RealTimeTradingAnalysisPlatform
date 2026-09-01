@@ -18,7 +18,11 @@ class Bar:
 
 
 def bars(*minutes_ago: int) -> list[Bar]:
-    return [Bar(NOW - timedelta(minutes=m)) for m in minutes_ago]
+    """Oldest-first, which is the contract every caller and the replay module
+    share. Sorted here rather than trusting the argument order: an earlier
+    version of this helper returned newest-first and the linear scan it was
+    written against silently tolerated it."""
+    return [Bar(NOW - timedelta(minutes=m)) for m in sorted(minutes_ago, reverse=True)]
 
 
 class TheFormingBarIsRejected(unittest.TestCase):
