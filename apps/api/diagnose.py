@@ -285,7 +285,7 @@ if gap_asset:
         client.table("candles").select("open_time")
         .eq("asset_id", gap_asset["id"]).eq("timeframe", "M5")
         .gte("open_time", (now - timedelta(days=3)).isoformat())
-        .order("open_time", ascending=True).limit(2000).execute().data or []
+        .order("open_time", desc=False).limit(2000).execute().data or []
     )
     times = [parse(r["open_time"]) for r in recent]
     gaps = [
