@@ -41,6 +41,7 @@ spending anything.
 from __future__ import annotations
 
 import asyncio
+import math
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -77,7 +78,8 @@ async def backfill_asset(asset: Asset, provider, *, store) -> int:
     cursor = datetime.now(timezone.utc)
     now = cursor
 
-    for page in range(1, (TARGET_M5_BARS // PAGE_SIZE) + 2):
+    pages_needed = math.ceil(TARGET_M5_BARS / PAGE_SIZE)
+    for page in range(1, pages_needed + 1):
         if len(collected) >= TARGET_M5_BARS:
             break
         try:
@@ -105,6 +107,15 @@ async def backfill_asset(asset: Asset, provider, *, store) -> int:
         if not fresh:
             print("    no new bars in this page — history exhausted")
             break
+
+        # A short page means the provider has no more history to give. Asking
+        # again spends a request to be told the same thing -- and on a metered
+        # feed that is how a backfill ends by tripping the rate limit it was
+        # about to stop needing anyway.
+        if len(bars) < PAGE_SIZE:
+            print(f"    provider returned a short page ({len(bars)}) — history ends here")
+            break
+
         cursor = oldest - timedelta(minutes=5)
 
     if not collected:
@@ -145,7 +156,7 @@ async def main() -> None:
 
     provider = build_provider()
     assets = list(Asset)
-    pages = (TARGET_M5_BARS // PAGE_SIZE) + 1
+    pages = math.ceil(TARGET_M5_BARS / PAGE_SIZE)
     print(f"\nBackfill plan: {len(assets)} assets x up to {pages} pages "
           f"= up to {len(assets) * pages} API requests")
     print(f"Target: {TARGET_M5_BARS:,} M5 bars each, enough to derive {WARMUP_BARS}+ H4 bars.")
