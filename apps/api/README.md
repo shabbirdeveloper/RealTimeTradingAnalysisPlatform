@@ -81,6 +81,29 @@ uvicorn app.main:app --reload
 
 Then check `http://127.0.0.1:8000/health`.
 
+## Checking whether signals are working
+
+```bash
+.venv\Scripts\python.exe diagnose.py      # Windows
+.venv/bin/python diagnose.py               # macOS / Linux
+```
+
+Walks the pipeline in order — config, database, migrations, candles, warm-up,
+decisions, failures, resolution — and stops at the FIRST broken stage, because
+a later stage failing is usually an echo of an earlier one. Read-only; it never
+prints a credential.
+
+The distinction it exists to draw: "no signals" has several completely
+different causes that look identical from the dashboard.
+
+| What you see | What it actually means |
+| --- | --- |
+| No candles | The collector isn't running |
+| Candles, all stale | It stopped, or its polls are failing |
+| Fewer than 250 bars | Warming up — NO_TRADE is correct here |
+| Missing schema column | Migrations not applied; every signal write throws |
+| Decisions, all NO_TRADE | Working. It is rejecting setups, which is the point |
+
 ## Running the tests
 
 `app/aggregation.py`, everything under `app/features/` (indicators,
