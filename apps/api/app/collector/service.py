@@ -21,9 +21,11 @@ from app.storage.strategy_repository import load_strategy
 from app.features.snapshot import compute_feature_dict
 from app.market_data.base import MarketDataError, MarketDataProvider
 from app.instruments import FeedDescriptor, FeedKind
+from app.instruments import is_otc_symbol as instrument_is_otc
 from app.market_data.closed_bars import split_closed
 from app.market_data.resilience import RetryPolicy, call_with_retry
 from app.news.factory import build_calendar_provider
+from app.notifications.telegram import notify_new_signal
 from app.schemas.candle import Asset, Candle, Timeframe
 from app.storage import audit_repository as audit
 from app.storage.candle_repository import fetch_recent_candles, upsert_candles
@@ -292,7 +294,15 @@ def _run_analysis_cycle(asset: Asset, provider: MarketDataProvider) -> None:
             f" expiry={decision.expiry_seconds}s" if decision.expiry_seconds else "",
             note[:110],
         )
-        insert_signal(asset, decision)
+        write = insert_signal(asset, decision)
+
+        # Alert only on a NEWLY created directional signal. A setup standing
+        # for an hour is one opportunity, not six -- re-alerting every poll
+        # is how a channel becomes noise you stop reading, and then the one
+        # message that mattered goes unread too.
+        if write.created and decision.direction in ("CALL", "PUT") and write.status == "ACTIVE":
+            if notify_new_signal(asset.value, decision, is_otc=instrument_is_otc(asset.value)):
+                logger.info("%s: signal pushed to Telegram", asset.value)
     except Exception as exc:  # noqa: BLE001 -- deliberately broad, see docstring
         logger.exception("analysis cycle failed for %s", asset.value)
         audit.record(

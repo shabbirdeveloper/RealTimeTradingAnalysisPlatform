@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     # auth layer in front of this service regardless.
     admin_api_key: str | None = Field(default=None)
 
+    # Telegram alerting. Optional: unset means signals are recorded but not
+    # pushed anywhere. Both values are required together -- a token with no
+    # chat id can authenticate and still deliver nothing, which looks like a
+    # working integration that silently drops every message.
+    telegram_bot_token: str | None = Field(default=None)
+    telegram_chat_id: str | None = Field(default=None)
+
+    @property
+    def has_telegram(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
+
     @property
     def has_real_provider(self) -> bool:
         return bool(self.twelve_data_api_key)

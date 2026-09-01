@@ -33,7 +33,7 @@ decision updates `last_evaluated_at` instead, which keeps "NO TRADE since
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.features.decision_identity import fingerprint as _fingerprint
@@ -96,7 +96,23 @@ def _touch(client, signal_id: str, now: datetime) -> None:
     ).eq("id", signal_id).execute()
 
 
-def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
+@dataclass(frozen=True)
+class SignalWrite:
+    """What actually happened to the database on this cycle.
+
+    `created` distinguishes a genuinely new decision from a re-confirmation of
+    a standing one. Callers that act on signals -- alerting above all -- need
+    that: without it, an alert fires every poll for as long as a setup lasts,
+    and an alert that repeats is one you learn to ignore.
+    """
+
+    signal_id: str | None
+    created: bool
+    direction: str
+    status: str
+
+
+def insert_signal(asset: Asset, decision: SignalDecision) -> SignalWrite:
     asset_id = _asset_id_map()[asset]
     client = get_service_client()
 
@@ -194,7 +210,7 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
             and datetime.fromisoformat(latest["expiry_at"]) > generated_at
         ):
             _touch(client, latest["id"], generated_at)
-            return latest["id"]
+            return SignalWrite(latest["id"], created=False, direction=direction, status=status)
 
         # Otherwise: same decision as last time -> just record that we looked.
         if _fingerprint(
@@ -209,8 +225,11 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
             decision.strategy_version or "",
         ):
             _touch(client, latest["id"], generated_at)
-            return latest["id"]
+            return SignalWrite(latest["id"], created=False, direction=direction, status=status)
 
     response = client.table("signals").insert(row).execute()
     rows = response.data or []
-    return rows[0]["id"] if rows else None
+    return SignalWrite(
+        rows[0]["id"] if rows else None, created=bool(rows),
+        direction=direction, status=status,
+    )

@@ -136,6 +136,21 @@ table — a provider's H4 uses its own bucket conventions, which need not match
 ours, and the mismatch would surface later as a backtest that quietly
 disagrees with live.
 
+## Getting told when a signal fires
+
+The engine rejects most cycles by design, so signals are rare — and a rare
+signal you don't see is worth nothing. Set `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` in `.env` (see `.env.example` for how to get both) and new
+CALL/PUT signals arrive on your phone.
+
+Only **newly created** directional signals alert. A setup that stands for an
+hour is one opportunity, not six, and NO_TRADE cycles never alert at all — a
+channel that pings constantly is one you stop reading, and then the message
+that mattered goes unread too.
+
+Unset means signals are still recorded and visible in the dashboard, just not
+pushed anywhere.
+
 ## "Why is it always NO TRADE?"
 
 ```bash
