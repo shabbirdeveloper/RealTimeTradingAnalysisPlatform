@@ -87,9 +87,28 @@ Double-click these in `apps/api`, or run them from any prompt on any drive:
 
 | File | What it does |
 | --- | --- |
-| `start-collector.bat` | Starts the collector. **Leave the window open** — closing it stops collection. |
+| `install-autostart.bat` | **Run once.** Starts the collector at every logon, and restarts it if it crashes. |
+| `start-collector.bat` | Starts it in the foreground. Closing the window stops collection. |
+| `run-collector-forever.bat` | Same, but restarts after a crash. This is what autostart runs. |
 | `check.bat` | Reports where the pipeline is stuck. Safe any time. |
 | `backfill.bat --run` | Fetches historical candles so the engine can warm up. |
+
+The collector must run continuously — it accumulates candle history and
+resolves signals when they reach expiry. Every gap is history never collected
+and signals never scored, and both are unrecoverable after the fact.
+
+`install-autostart.bat` fixes the two ways it has actually died: the terminal
+window being closed, and the machine restarting. It does **not** fix sleep. A
+laptop that sleeps still stops collecting; genuinely continuous operation
+needs a machine that stays awake.
+
+### Logs
+
+The collector writes to `apps/api/logs/collector.log` (5 files, 2MB each).
+Console output dies with the window, which is why the first two crashes left
+no evidence. Query parameters named `apikey`, `token`, `password` and similar
+are redacted before anything reaches disk — the Twelve Data key travels in a
+URL, and a log file is a durable artifact that gets attached to bug reports.
 
 Each begins with `cd /d "%~dp0"` for a specific reason: plain `cd` on Windows
 changes the directory on a drive without switching to it, so `cd F:\...` typed

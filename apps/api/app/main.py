@@ -21,15 +21,10 @@ from app.api.routes import debug as debug_routes
 from app.api.routes import health as health_routes
 from app.collector.scheduler import run_all_assets, start_scheduler, stop_scheduler
 from app.config import get_settings
+from app.logging_setup import configure as configure_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+_LOG_PATH = configure_logging()
 logger = logging.getLogger(__name__)
-
-# httpx logs each request URL at INFO level, which would otherwise print
-# TWELVE_DATA_API_KEY in plain text every single poll (it's a query param
-# on the Twelve Data request). WARNING still surfaces real httpx problems
-# (connection errors, timeouts), just not routine successful requests.
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title="NorthFXTrade Market Data Service", version="0.1.0")
 app.include_router(health_routes.router)
@@ -39,6 +34,8 @@ app.include_router(admin_backtest_routes.router)
 
 @app.on_event("startup")
 async def _on_startup() -> None:
+    if _LOG_PATH:
+        logger.info("logging to %s", _LOG_PATH)
     settings = get_settings()
     if not settings.has_supabase:
         logger.warning(
