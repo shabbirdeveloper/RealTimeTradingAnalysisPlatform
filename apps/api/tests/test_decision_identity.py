@@ -16,7 +16,7 @@ class TestPrimaryNote(unittest.TestCase):
 
 class TestFingerprint(unittest.TestCase):
     def _fp(self, **kw):
-        base = dict(direction="CALL", grade="B", expiry_minutes=30,
+        base = dict(direction="CALL", grade="B", expiry_seconds=30,
                     market_regime="TRENDING_UP", note="H4 and H1 aligned")
         base.update(kw)
         return fingerprint(**base)
@@ -39,7 +39,7 @@ class TestFingerprint(unittest.TestCase):
         self.assertNotEqual(self._fp(), self._fp(grade="REJECTED"))
 
     def test_expiry_change_is_material(self):
-        self.assertNotEqual(self._fp(), self._fp(expiry_minutes=60))
+        self.assertNotEqual(self._fp(), self._fp(expiry_seconds=60))
 
     def test_regime_change_is_material(self):
         self.assertNotEqual(self._fp(), self._fp(market_regime="RANGING"))
@@ -90,14 +90,14 @@ class StrategyVersionIsPartOfIdentity(unittest.TestCase):
 
     def test_same_decision_under_a_new_rule_set_is_a_new_decision(self):
         self.assertNotEqual(
-            fingerprint(*self.ARGS, "v1:aaaaaa"),
+            fingerprint(*self.ARGS, "v2:aaaaaa"),
             fingerprint(*self.ARGS, "v2:bbbbbb"),
         )
 
     def test_same_decision_under_the_same_rule_set_is_still_the_same(self):
         self.assertEqual(
-            fingerprint(*self.ARGS, "v1:aaaaaa"),
-            fingerprint(*self.ARGS, "v1:aaaaaa"),
+            fingerprint(*self.ARGS, "v2:aaaaaa"),
+            fingerprint(*self.ARGS, "v2:aaaaaa"),
         )
 
     def test_missing_version_is_treated_as_the_empty_string_not_as_distinct(self):

@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass
 
 from app.features.strategy import AssetStrategy, default_strategy, strategy_from_rows
+from app.instruments import get_instrument
 from app.schemas.candle import Asset
 from app.storage.candle_repository import _asset_id_map
 from app.storage.supabase_client import get_service_client
@@ -65,17 +66,26 @@ def _fetch(asset: Asset) -> LoadedStrategy:
         client = get_service_client()
         response = (
             client.table("strategy_configs")
-            .select("expiry_minutes, min_technical_score, allowed_regimes, "
+            .select("expiry_minutes, expiry_seconds, min_technical_score, allowed_regimes, "
                     "allowed_sessions, enabled, label")
             .eq("asset_id", asset_id)
             .execute()
         )
         rows = response.data or []
-        return LoadedStrategy(strategy=strategy_from_rows(asset.value, rows), loaded=True)
+        # Expiry set comes from the instrument's profile, so an OTC asset
+        # gets its second-scale horizons rather than the real-market ones.
+        expiries = get_instrument(asset.value).profile.expiries_seconds
+        return LoadedStrategy(
+            strategy=strategy_from_rows(asset.value, rows, expiries=expiries), loaded=True
+        )
     except Exception as exc:  # noqa: BLE001 -- see module docstring
         logger.warning("strategy config load failed for %s: %s", asset.value, exc)
         return LoadedStrategy(
-            strategy=default_strategy(asset.value), loaded=False, error=str(exc)
+            strategy=default_strategy(
+                asset.value, expiries=get_instrument(asset.value).profile.expiries_seconds
+            ),
+            loaded=False,
+            error=str(exc),
         )
 
 

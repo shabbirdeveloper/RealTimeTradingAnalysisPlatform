@@ -96,7 +96,7 @@ class TestRunBacktest(unittest.TestCase):
             technical_score_threshold=78, expiry_filter=60, step_minutes=15,
         )
         for o in summary.opportunities:
-            self.assertEqual(o.expiry_minutes, 60)
+            self.assertEqual(o.expiry_seconds, 60)
 
     def test_regime_filter_restricts_results(self):
         history = uptrend_history()

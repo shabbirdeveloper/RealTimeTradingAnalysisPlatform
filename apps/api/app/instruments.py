@@ -80,6 +80,71 @@ class FeedDescriptor:
 
 
 @dataclass(frozen=True)
+class TradingProfile:
+    """Which timeframes to analyse, and over what horizons to trade.
+
+    These differ by an order of magnitude between instrument classes, and
+    hardcoding one set was what made OTC impossible to express. A real-market
+    signal reasons over hours and expires in 15-60 minutes; a Quotex OTC
+    signal reasons over minutes and expires in 15-180 SECONDS.
+
+    Held on the instrument rather than passed around, so adding an instrument
+    class is a registry entry instead of a branch inside the engine.
+    """
+
+    # Slowest to fastest. Spec Phase 4's ladder: the slow end supplies trend
+    # context, the fast end supplies the entry trigger.
+    timeframes: tuple[str, ...]
+    # The timeframe entry_price is read from, and whose staleness is checked.
+    # Always the fastest, but named explicitly rather than inferred, because
+    # "last element of a tuple" is an easy thing to silently reorder.
+    entry_timeframe: str
+    # Candidate horizons, in SECONDS. Never minutes: 15 seconds is not an
+    # integer number of minutes, and that is exactly what blocked OTC.
+    expiries_seconds: tuple[int, ...]
+    # How stale the newest entry-timeframe bar may be before the engine
+    # refuses to decide. Scaled to the timeframe: 15 minutes of staleness is
+    # a minor gap on M5 and an eternity on S15.
+    max_data_age_seconds: int
+
+    def __post_init__(self) -> None:
+        if self.entry_timeframe != self.timeframes[-1]:
+            raise ValueError(
+                f"entry_timeframe {self.entry_timeframe!r} must be the fastest timeframe "
+                f"(last of {self.timeframes})"
+            )
+        if not self.expiries_seconds:
+            raise ValueError("a profile must offer at least one expiry")
+
+
+# Real markets: hours of context, expiries of 15/30/60 minutes. Unchanged
+# from what the engine has always done -- expressed as data now rather than
+# as constants inside the engine.
+PUBLIC_MARKET_PROFILE = TradingProfile(
+    timeframes=("H4", "H1", "M15", "M5"),
+    entry_timeframe="M5",
+    expiries_seconds=(900, 1800, 3600),
+    max_data_age_seconds=900,  # three closed M5 bars
+)
+
+# Broker OTC: minutes of context, expiries of seconds. The ladder follows
+# spec Phase 4 -- M5 for trend context, M1 for structure and momentum,
+# S30/S15 for the entry trigger.
+#
+# A 15-second expiry on a 15-second entry bar is included but is the most
+# noise-dominated horizon on offer: entry is the close of one bar and
+# settlement the close of the next, so no confirmation is possible in
+# between. It is a candidate, not a recommendation, and the strategy config
+# can disable it per instrument.
+OTC_PROFILE = TradingProfile(
+    timeframes=("M5", "M1", "S30", "S15"),
+    entry_timeframe="S15",
+    expiries_seconds=(15, 30, 60, 120, 180),
+    max_data_age_seconds=45,  # three closed S15 bars
+)
+
+
+@dataclass(frozen=True)
 class Instrument:
     symbol: str                  # canonical internal id, e.g. "EURUSD_OTC"
     display_name: str            # "EUR/USD (OTC)"
@@ -100,6 +165,10 @@ class Instrument:
     @property
     def required_feed_kind(self) -> FeedKind:
         return FeedKind.BROKER_OTC if self.is_otc else FeedKind.PUBLIC_MARKET
+
+    @property
+    def profile(self) -> TradingProfile:
+        return OTC_PROFILE if self.is_otc else PUBLIC_MARKET_PROFILE
 
 
 # ---------------------------------------------------------------------------

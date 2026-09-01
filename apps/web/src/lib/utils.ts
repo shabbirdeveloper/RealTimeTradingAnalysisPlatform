@@ -47,3 +47,36 @@ export function formatDateTimeUTC(iso: string): string {
     hour12: false,
   }) + " UTC";
 }
+
+/**
+ * Human-readable trade horizon. Mirrors format_expiry() in
+ * apps/api/app/features/strategy.py — the two must agree, or the same signal
+ * reads differently in the dashboard than in the engine's own reasons.
+ *
+ * Takes SECONDS. Real-market horizons are 15/30/60 minutes; broker-OTC
+ * horizons are 15–180 seconds, and a single "N min" template cannot render
+ * both — a 15-second expiry shown as "0 min" or "1 min" is not a rounding
+ * error, it is the wrong trade.
+ */
+export function formatExpiry(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m${rest}s`;
+}
+
+/**
+ * Seconds for a signal that may carry either column. `expirySeconds` is
+ * authoritative; `expiryMinutes` is the pre-OTC spelling. Read in this order
+ * so a legacy 15 (minutes) can never shadow a real 15 (seconds).
+ */
+export function expirySecondsOf(signal: {
+  expirySeconds?: number | null;
+  expiryMinutes?: number | null;
+}): number | null {
+  if (signal.expirySeconds !== null && signal.expirySeconds !== undefined) {
+    return signal.expirySeconds;
+  }
+  return signal.expiryMinutes != null ? signal.expiryMinutes * 60 : null;
+}

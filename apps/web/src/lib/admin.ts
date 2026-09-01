@@ -413,7 +413,7 @@ export const STRATEGY_DEFAULTS = {
 
 export interface StrategyConfigRow {
   asset: string;
-  expiryMinutes: number;
+  expirySeconds: number;
   minTechnicalScore: number;
   allowedRegimes: string[];
   allowedSessions: string[];
@@ -450,8 +450,8 @@ export async function getStrategyReport(): Promise<StrategyReport> {
       supabase.from("assets").select("id, symbol"),
       supabase
         .from("strategy_configs")
-        .select("asset_id, expiry_minutes, min_technical_score, allowed_regimes, allowed_sessions, enabled, label, updated_at")
-        .order("expiry_minutes", { ascending: true }),
+        .select("asset_id, expiry_minutes, expiry_seconds, min_technical_score, allowed_regimes, allowed_sessions, enabled, label, updated_at")
+        .order("expiry_seconds", { ascending: true }),
       supabase
         .from("signals")
         .select("asset_id, strategy_version, generated_at")
@@ -473,13 +473,13 @@ export async function getStrategyReport(): Promise<StrategyReport> {
 
     const overrides: StrategyConfigRow[] = (
       (configResult.data ?? []) as Array<{
-        asset_id: string; expiry_minutes: number; min_technical_score: number;
+        asset_id: string; expiry_minutes: number | null; expiry_seconds: number | null; min_technical_score: number;
         allowed_regimes: string[] | null; allowed_sessions: string[] | null;
         enabled: boolean; label: string; updated_at: string | null;
       }>
     ).map((r) => ({
       asset: symbolById.get(r.asset_id) ?? "—",
-      expiryMinutes: r.expiry_minutes,
+      expirySeconds: r.expiry_seconds ?? (r.expiry_minutes != null ? r.expiry_minutes * 60 : 0),
       minTechnicalScore: r.min_technical_score,
       allowedRegimes: r.allowed_regimes ?? [...STRATEGY_DEFAULTS.regimes],
       allowedSessions: r.allowed_sessions ?? [...STRATEGY_DEFAULTS.sessions],

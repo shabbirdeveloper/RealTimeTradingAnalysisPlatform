@@ -47,7 +47,7 @@ export async function getLatestSignals(): Promise<Record<AssetSymbol, Signal | n
         const { data } = await supabase
           .from("signals")
           .select(
-            "id, direction, generated_at, entry_price, expiry_minutes, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
+            "id, direction, generated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
           )
           .eq("asset_id", assetRow.id)
           .order("generated_at", { ascending: false })
@@ -84,7 +84,7 @@ export async function getLatestSignal(asset: AssetSymbol): Promise<Signal | null
     const { data } = await supabase
       .from("signals")
       .select(
-        "id, direction, generated_at, entry_price, expiry_minutes, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
+        "id, direction, generated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
       )
       .eq("asset_id", (assetRow as { id: string }).id)
       .order("generated_at", { ascending: false })
@@ -104,6 +104,7 @@ interface SignalRow {
   generated_at: string;
   entry_price: string | number | null;
   expiry_minutes: ExpiryMinutes | null;
+  expiry_seconds?: number | null;
   expiry_at: string | null;
   technical_score: number;
   calibrated_confidence: number | null;
@@ -115,7 +116,14 @@ interface SignalRow {
   warnings: string[] | null;
   timeframes_snapshot: {
     timeframes?: TimeframeBias[];
-    candidates?: { expiry_minutes: ExpiryMinutes; direction: Direction; technical_score: number; grade: SignalGrade }[];
+    candidates?: {
+      expiry_minutes?: ExpiryMinutes | null;
+      expiry_seconds?: number | null;
+      direction: Direction;
+      technical_score: number;
+      grade: SignalGrade;
+      rejection_reason?: string | null;
+    }[];
     regime_reason?: string;
   } | null;
 }
@@ -126,7 +134,9 @@ function shapeSignal(asset: AssetSymbol, row: SignalRow): Signal {
 
   const candidates: ExpiryCandidate[] | undefined = rawCandidates.length
     ? rawCandidates.map((c) => ({
-        expiryMinutes: c.expiry_minutes,
+        expiryMinutes: (c.expiry_minutes ?? null) as ExpiryMinutes,
+        // The engine writes seconds; older snapshots carry minutes only.
+        expirySeconds: c.expiry_seconds ?? (c.expiry_minutes != null ? c.expiry_minutes * 60 : null),
         direction: c.direction,
         technicalScore: c.technical_score,
         modelConfidence: null,
@@ -144,6 +154,7 @@ function shapeSignal(asset: AssetSymbol, row: SignalRow): Signal {
     technicalScore: row.technical_score,
     grade: row.grade,
     expiryMinutes: row.expiry_minutes,
+    expirySeconds: row.expiry_seconds ?? (row.expiry_minutes != null ? row.expiry_minutes * 60 : null),
     marketRegime: row.market_regime,
     generatedAt: row.generated_at,
     entryPrice: row.entry_price !== null ? Number(row.entry_price) : null,

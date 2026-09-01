@@ -44,6 +44,17 @@ from app.storage.candle_repository import _asset_id_map
 from app.storage.supabase_client import get_service_client
 
 
+def _row_expiry_seconds(row: dict) -> int | None:
+    """A stored row's horizon in seconds. `expiry_seconds` wins; the older
+    `expiry_minutes` is converted. Reading them the other way round would let
+    a legacy 15 (minutes) shadow a real 15 (seconds)."""
+    seconds = row.get("expiry_seconds")
+    if seconds is not None:
+        return int(seconds)
+    minutes = row.get("expiry_minutes")
+    return int(minutes) * 60 if minutes is not None else None
+
+
 def _timeframes_snapshot(decision: SignalDecision) -> list[dict]:
     return [
         {"timeframe": t.timeframe, "bias": t.bias, "strength": t.strength, "notes": t.notes}
@@ -58,8 +69,8 @@ def _candidates_snapshot(decision: SignalDecision) -> list[dict]:
 def _latest_signal_row(client, asset_id: str) -> dict | None:
     response = (
         client.table("signals")
-        .select("id, direction, grade, expiry_minutes, market_regime, status, "
-                "expiry_at, reasons, warnings, strategy_version")
+        .select("id, direction, grade, expiry_minutes, expiry_seconds, market_regime, "
+                "status, expiry_at, reasons, warnings, strategy_version")
         .eq("asset_id", asset_id)
         .order("generated_at", desc=True)
         .limit(1)
@@ -93,13 +104,31 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
     # "would this have won?", and the quality threshold stays unfalsifiable.
     # Use the expiry the engine would have picked: its highest-scoring
     # candidate.
-    expiry_minutes = decision.expiry_minutes
-    if expiry_minutes is None and decision.rejected_opportunity_direction and decision.candidates:
-        expiry_minutes = max(decision.candidates, key=lambda c: c.technical_score).expiry_minutes
+    expiry_seconds = decision.expiry_seconds
+    if expiry_seconds is None and decision.rejected_opportunity_direction and decision.candidates:
+        expiry_seconds = max(decision.candidates, key=lambda c: c.technical_score).expiry_seconds
 
     expiry_at = (
-        (generated_at + timedelta(minutes=expiry_minutes)).isoformat()
-        if expiry_minutes is not None
+        (generated_at + timedelta(seconds=expiry_seconds)).isoformat()
+        if expiry_seconds is not None
+        else None
+    )
+
+    # Both columns are written, and they mean different things.
+    #
+    # `expiry_seconds` is authoritative -- it is what the engine actually
+    # decided, and the only column that can express a 15-second OTC horizon.
+    # `expiry_minutes` is the pre-OTC spelling, still populated for
+    # real-market signals so the existing frontend, admin tables and
+    # performance queries keep working unchanged.
+    #
+    # It is left NULL for anything that is not a whole number of minutes
+    # rather than rounded. A 15-second expiry rounded to 0 minutes is wrong,
+    # and rounded to 1 minute is a four-fold lie about the horizon; a null
+    # reads honestly as "this horizon is not expressible in this column".
+    expiry_minutes = (
+        expiry_seconds // 60
+        if expiry_seconds is not None and expiry_seconds % 60 == 0
         else None
     )
 
@@ -110,6 +139,7 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
         "last_evaluated_at": generated_at.isoformat(),
         "entry_price": str(decision.entry_price) if decision.entry_price else None,
         "expiry_minutes": expiry_minutes,
+        "expiry_seconds": expiry_seconds,
         "expiry_at": expiry_at,
         "technical_score": decision.technical_score,
         "raw_probability": None,  # Phase 6 (ML) not built -- never fabricated
@@ -157,12 +187,12 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> str | None:
 
         # Otherwise: same decision as last time -> just record that we looked.
         if _fingerprint(
-            latest["direction"], latest["grade"], latest["expiry_minutes"],
+            latest["direction"], latest["grade"], _row_expiry_seconds(latest),
             latest["market_regime"],
             _primary_note(latest.get("reasons"), latest.get("warnings")),
             latest.get("strategy_version") or "",
         ) == _fingerprint(
-            direction, decision.grade, decision.expiry_minutes,
+            direction, decision.grade, expiry_seconds,
             decision.market_regime,
             _primary_note(decision.reasons, decision.warnings),
             decision.strategy_version or "",

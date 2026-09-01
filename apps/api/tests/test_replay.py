@@ -190,12 +190,12 @@ class TestNoLookAheadBias(unittest.TestCase):
         self.assertEqual(decision_clean.direction, decision_spiked.direction)
         self.assertEqual(decision_clean.technical_score, decision_spiked.technical_score)
         self.assertEqual(decision_clean.market_regime, decision_spiked.market_regime)
-        self.assertEqual(decision_clean.expiry_minutes, decision_spiked.expiry_minutes)
+        self.assertEqual(decision_clean.expiry_seconds, decision_spiked.expiry_seconds)
         self.assertEqual(decision_clean.grade, decision_spiked.grade)
         self.assertEqual(decision_clean.entry_price, decision_spiked.entry_price)
         self.assertEqual(
-            [(c.expiry_minutes, c.technical_score) for c in decision_clean.candidates],
-            [(c.expiry_minutes, c.technical_score) for c in decision_spiked.candidates],
+            [(c.expiry_seconds, c.technical_score) for c in decision_clean.candidates],
+            [(c.expiry_seconds, c.technical_score) for c in decision_spiked.candidates],
         )
         self.assertEqual(
             [(t.timeframe, t.bias, t.strength) for t in decision_clean.timeframes],

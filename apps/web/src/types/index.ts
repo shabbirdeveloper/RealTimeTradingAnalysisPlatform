@@ -73,6 +73,7 @@ export interface SignalReasonSet {
 
 export interface ExpiryCandidate {
   expiryMinutes: ExpiryMinutes;
+  expirySeconds?: number | null;
   direction: Direction;
   technicalScore: number; // 0-100, always computed (technical scoring never depends on ML readiness)
   modelConfidence: number | null; // 0-100, null if MODEL_NOT_READY
@@ -89,6 +90,9 @@ export interface Signal {
   technicalScore: number;
   grade: SignalGrade;
   expiryMinutes: ExpiryMinutes | null;
+  /** Authoritative horizon in seconds. Broker-OTC trades 15-180s, which
+   *  expiryMinutes cannot express; it is null for those signals. */
+  expirySeconds: number | null;
   marketRegime: MarketRegime;
   generatedAt: string; // ISO
   entryPrice: number | null;

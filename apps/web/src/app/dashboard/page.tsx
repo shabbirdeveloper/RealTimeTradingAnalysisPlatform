@@ -86,6 +86,7 @@ export default async function DashboardHomePage() {
             technicalScore: 0,
             grade: "REJECTED",
             expiryMinutes: null,
+            expirySeconds: null,
             marketRegime: "UNSTABLE", // unused -- regimeAvailable={false} below hides it
             generatedAt: snapshot.lastUpdated,
             entryPrice: null,

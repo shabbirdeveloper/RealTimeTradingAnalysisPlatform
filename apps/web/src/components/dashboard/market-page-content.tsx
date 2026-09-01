@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DirectionBadge, GradeBadge, RegimeBadge, DataStatusPill, DemoDataBanner } from "@/components/shared/badges";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDateTimeUTC, formatPercent, formatPrice } from "@/lib/utils";
+import { expirySecondsOf, formatDateTimeUTC, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus, AlertTriangle } from "lucide-react";
 
 /**
@@ -156,7 +156,7 @@ export function MarketPageContent({
               <DirectionBadge direction={signal.direction} />
               {signal.direction !== "NO_TRADE" && <GradeBadge grade={signal.grade} />}
               <span className="text-sm text-muted-foreground">
-                {signal.direction === "NO_TRADE" ? signal.warnings[0] ?? signal.reasons[0] : `${signal.confidence !== null ? formatPercent(signal.confidence) : "N/A confidence"} · ${signal.expiryMinutes}m expiry`}
+                {signal.direction === "NO_TRADE" ? signal.warnings[0] ?? signal.reasons[0] : `${signal.confidence !== null ? formatPercent(signal.confidence) : "N/A confidence"} · ${formatExpiry(expirySecondsOf(signal))} expiry`}
               </span>
             </CardContent>
           </Card>
@@ -240,8 +240,8 @@ export function MarketPageContent({
                   </TableHeader>
                   <TableBody>
                     {candidates.map((c) => (
-                      <TableRow key={c.expiryMinutes} className={c.expiryMinutes === signal.expiryMinutes ? "bg-primary/5" : undefined}>
-                        <TableCell>{c.expiryMinutes} min</TableCell>
+                      <TableRow key={c.expiryMinutes ?? c.expirySeconds} className={expirySecondsOf(c) === expirySecondsOf(signal) ? "bg-primary/5" : undefined}>
+                        <TableCell>{formatExpiry(expirySecondsOf(c))}</TableCell>
                         <TableCell><DirectionBadge direction={c.direction} /></TableCell>
                         <TableCell className="font-mono-tabular">{c.technicalScore}/100</TableCell>
                         <TableCell className="font-mono-tabular">{c.modelConfidence !== null ? formatPercent(c.modelConfidence) : "MODEL_NOT_READY"}</TableCell>

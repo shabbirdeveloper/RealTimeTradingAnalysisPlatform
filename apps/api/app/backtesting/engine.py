@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from app.backtesting import replay
 from app.features.outcome import outcome
 from app.features.signal_engine import build_signal
+from app.features.strategy import format_expiry
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class BacktestOpportunity:
     grade: str
     market_regime: str
     session: str
-    expiry_minutes: int | None
+    expiry_seconds: int | None
     entry_price: float | None
     accepted: bool
     result: str | None = None       # WON / LOST / DRAW, None if unresolved
@@ -174,9 +175,9 @@ def run_backtest(
                 continue
 
             direction = decision.rejected_opportunity_direction or decision.direction
-            expiry = decision.expiry_minutes
+            expiry = decision.expiry_seconds
             if is_rejected_opportunity and expiry is None and decision.candidates:
-                expiry = max(decision.candidates, key=lambda c: c.technical_score).expiry_minutes
+                expiry = max(decision.candidates, key=lambda c: c.technical_score).expiry_seconds
             if expiry_filter is not None and expiry != expiry_filter:
                 continue
 
@@ -188,7 +189,7 @@ def run_backtest(
                 grade=decision.grade,
                 market_regime=decision.market_regime,
                 session=decision.session,
-                expiry_minutes=expiry,
+                expiry_seconds=expiry,
                 entry_price=decision.entry_price or None,
                 accepted=not is_rejected_opportunity,
             )
@@ -251,7 +252,9 @@ def _aggregate(summary: BacktestSummary) -> None:
             summary.max_loss_streak = max(summary.max_loss_streak, run_length)
 
     summary.performance_by_pair = _bucket(accepted, lambda o: o.asset)
-    summary.performance_by_expiry = _bucket(accepted, lambda o: f"{o.expiry_minutes}m" if o.expiry_minutes else "—")
+    summary.performance_by_expiry = _bucket(
+        accepted, lambda o: format_expiry(o.expiry_seconds) if o.expiry_seconds else "—"
+    )
     summary.performance_by_session = _bucket(accepted, lambda o: o.session)
     summary.performance_by_regime = _bucket(accepted, lambda o: o.market_regime)
     summary.performance_by_confidence_bucket = _bucket(accepted, lambda o: _score_bucket(o.technical_score))

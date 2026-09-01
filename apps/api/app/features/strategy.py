@@ -46,7 +46,22 @@ import json
 from dataclasses import dataclass, replace
 from typing import Iterable, Mapping
 
-EXPIRIES: tuple[int, ...] = (15, 30, 60)
+# Expiries are SECONDS everywhere in this module. The set an instrument
+# actually offers comes from its TradingProfile -- real markets trade
+# 15/30/60 minutes, broker-OTC trades 15-180 seconds, and one hardcoded tuple
+# could not express both. This constant is only the real-market default, used
+# where no instrument is in hand.
+DEFAULT_EXPIRIES_SECONDS: tuple[int, ...] = (900, 1800, 3600)
+
+
+def format_expiry(seconds: int) -> str:
+    """Human-readable horizon. Seconds below a minute, minutes above -- a
+    "3600s expiry" in an error message is needlessly hard to read."""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds // 60}m{seconds % 60}s"
 
 # Spec section 7. NEWS_MODE is in the enum but never returned by the regime
 # classifier (the news filter handles it upstream); it's listed so a config
@@ -74,22 +89,35 @@ DEFAULT_MIN_TECHNICAL_SCORE = 78
 
 # Human-readable label for the shipped rule set. An admin who tunes a config
 # should bump this, but forgetting to is harmless -- see version_string().
-DEFAULT_LABEL = "v1"
+#
+# v2: the expiry/timeframe weighting became a computed ramp over the
+# instrument's own ladder, replacing a hand-tuned table keyed on the literal
+# values 15/30/60. That table could not express OTC's five second-scale
+# horizons at all. The extremes are unchanged; the middle timeframes shift by
+# up to 0.067, which is worth roughly half a technical-score point and can
+# flip a setup sitting exactly on the threshold.
+#
+# The bump matters because the fingerprint covers CONFIG, not engine code --
+# so without relabelling, signals scored under the old weighting and the new
+# one would pool under one version, which is the precise failure the version
+# stamp exists to prevent. Free to do now: the engine has never run, so there
+# is no history to split.
+DEFAULT_LABEL = "v2"
 
 
 @dataclass(frozen=True)
 class StrategyConfig:
     """Tuning knobs for one (asset, expiry) pair."""
 
-    expiry_minutes: int
+    expiry_seconds: int
     min_technical_score: int = DEFAULT_MIN_TECHNICAL_SCORE
     allowed_regimes: frozenset[str] = ALL_REGIMES
     allowed_sessions: frozenset[str] = ALL_SESSIONS
     enabled: bool = True
 
     def __post_init__(self) -> None:
-        if self.expiry_minutes not in EXPIRIES:
-            raise ValueError(f"expiry_minutes must be one of {EXPIRIES}, got {self.expiry_minutes}")
+        if self.expiry_seconds <= 0:
+            raise ValueError(f"expiry_seconds must be positive, got {self.expiry_seconds}")
         if not 0 <= self.min_technical_score <= 100:
             raise ValueError(f"min_technical_score must be 0-100, got {self.min_technical_score}")
         unknown_regimes = set(self.allowed_regimes) - ALL_REGIMES
@@ -109,21 +137,21 @@ class StrategyConfig:
         than "scored 74, needed 78" when both are true.
         """
         if not self.enabled:
-            return f"{self.expiry_minutes}m expiry is disabled in the strategy config."
+            return f"{format_expiry(self.expiry_seconds)} expiry is disabled in the strategy config."
         if regime not in self.allowed_regimes:
             return (
                 f"Regime {regime.replace('_', ' ').lower()} is not permitted for the "
-                f"{self.expiry_minutes}m expiry under the current strategy config."
+                f"{format_expiry(self.expiry_seconds)} expiry under the current strategy config."
             )
         if session not in self.allowed_sessions:
             return (
                 f"{session.replace('_', ' ').title()} session is not permitted for the "
-                f"{self.expiry_minutes}m expiry under the current strategy config."
+                f"{format_expiry(self.expiry_seconds)} expiry under the current strategy config."
             )
         if technical_score < self.min_technical_score:
             return (
                 f"Technical score {technical_score} is below the {self.min_technical_score} "
-                f"minimum for the {self.expiry_minutes}m expiry."
+                f"minimum for the {format_expiry(self.expiry_seconds)} expiry."
             )
         return None
 
@@ -138,12 +166,15 @@ class AssetStrategy:
     by_expiry: Mapping[int, StrategyConfig]
 
     def __post_init__(self) -> None:
-        missing = [e for e in EXPIRIES if e not in self.by_expiry]
-        if missing:
-            raise ValueError(f"AssetStrategy for {self.asset} is missing expiries: {missing}")
+        if not self.by_expiry:
+            raise ValueError(f"AssetStrategy for {self.asset} offers no expiries")
 
-    def for_expiry(self, expiry_minutes: int) -> StrategyConfig:
-        return self.by_expiry[expiry_minutes]
+    @property
+    def expiries(self) -> tuple[int, ...]:
+        return tuple(sorted(self.by_expiry))
+
+    def for_expiry(self, expiry_seconds: int) -> StrategyConfig:
+        return self.by_expiry[expiry_seconds]
 
     def with_min_score(self, score: int) -> "AssetStrategy":
         """Every expiry forced to the same minimum score. This is what the
@@ -155,13 +186,21 @@ class AssetStrategy:
         )
 
 
-def default_strategy(asset: str, *, label: str = DEFAULT_LABEL) -> AssetStrategy:
-    """The shipped rule set: identical to the engine's behaviour before this
-    module existed. Every expiry at 78, every regime and session allowed."""
+def default_strategy(
+    asset: str, *, label: str = DEFAULT_LABEL, expiries: tuple[int, ...] | None = None
+) -> AssetStrategy:
+    """The shipped rule set: every expiry at 78, every regime and session
+    allowed. For real markets this is identical to the engine's behaviour
+    before this module existed.
+
+    `expiries` comes from the instrument's TradingProfile. It defaults to the
+    real-market set so callers that predate profiles keep working.
+    """
+    expiries = expiries or DEFAULT_EXPIRIES_SECONDS
     return AssetStrategy(
         asset=asset,
         label=label,
-        by_expiry={e: StrategyConfig(expiry_minutes=e) for e in EXPIRIES},
+        by_expiry={e: StrategyConfig(expiry_seconds=e) for e in expiries},
     )
 
 
@@ -182,7 +221,7 @@ def _canonical(strategy: AssetStrategy) -> str:
         "asset": strategy.asset,
         "expiries": [
             {
-                "expiry": e,
+                "expiry_seconds": e,
                 "min_technical_score": c.min_technical_score,
                 "allowed_regimes": sorted(c.allowed_regimes),
                 "allowed_sessions": sorted(c.allowed_sessions),
@@ -225,24 +264,44 @@ def summarize_overrides(strategy: AssetStrategy) -> list[str]:
     shipped defaults. Empty list means "running stock rules" -- which is
     worth being able to state positively, rather than inferring it from an
     absence of warnings."""
-    stock = default_strategy(strategy.asset)
+    stock = default_strategy(strategy.asset, expiries=strategy.expiries)
     notes: list[str] = []
-    for expiry in EXPIRIES:
+    for expiry in strategy.expiries:
         cfg, base = strategy.for_expiry(expiry), stock.for_expiry(expiry)
+        label = format_expiry(expiry)
         if not cfg.enabled:
-            notes.append(f"{expiry}m disabled")
+            notes.append(f"{label} disabled")
             continue
         if cfg.min_technical_score != base.min_technical_score:
-            notes.append(f"{expiry}m min score {cfg.min_technical_score} (default {base.min_technical_score})")
+            notes.append(f"{label} min score {cfg.min_technical_score} (default {base.min_technical_score})")
         if cfg.allowed_regimes != base.allowed_regimes:
-            notes.append(f"{expiry}m regimes limited to {', '.join(sorted(cfg.allowed_regimes))}")
+            notes.append(f"{label} regimes limited to {', '.join(sorted(cfg.allowed_regimes))}")
         if cfg.allowed_sessions != base.allowed_sessions:
-            notes.append(f"{expiry}m sessions limited to {', '.join(sorted(cfg.allowed_sessions))}")
+            notes.append(f"{label} sessions limited to {', '.join(sorted(cfg.allowed_sessions))}")
     return notes
 
 
+def row_expiry_seconds(row: Mapping) -> int | None:
+    """The horizon a config row applies to, in seconds.
+
+    Rows may carry either column. `expiry_seconds` wins when present;
+    `expiry_minutes` is the pre-OTC spelling and is converted. Reading them in
+    the other order would let a stale 15 (minutes) shadow a real 15 (seconds)
+    and silently apply a 15-minute rule to a 15-second horizon.
+    """
+    seconds = row.get("expiry_seconds")
+    if seconds is not None:
+        return int(seconds)
+    minutes = row.get("expiry_minutes")
+    return int(minutes) * 60 if minutes is not None else None
+
+
 def strategy_from_rows(
-    asset: str, rows: Iterable[Mapping], *, label: str = DEFAULT_LABEL
+    asset: str,
+    rows: Iterable[Mapping],
+    *,
+    label: str = DEFAULT_LABEL,
+    expiries: tuple[int, ...] | None = None,
 ) -> AssetStrategy:
     """Builds an AssetStrategy by layering database overrides over the code
     defaults, one expiry at a time.
@@ -252,21 +311,28 @@ def strategy_from_rows(
     An absent row means 'no override', which is unambiguous and needs no
     migration to stay in sync.
 
-    Unknown expiries in the data are ignored rather than raised on: a row
-    for an expiry this build no longer supports should not stop signal
-    generation.
+    `expiries` comes from the instrument's TradingProfile, so an OTC
+    instrument gets its second-scale horizons and a real-market one gets its
+    minute-scale ones. Rows naming an expiry outside that set are ignored
+    rather than raised on: a leftover row for a horizon this instrument no
+    longer offers should not stop signal generation.
     """
-    by_expiry = {e: StrategyConfig(expiry_minutes=e) for e in EXPIRIES}
+    expiries = expiries or DEFAULT_EXPIRIES_SECONDS
+    by_expiry = {e: StrategyConfig(expiry_seconds=e) for e in expiries}
     resolved_label = label
 
     # Sorted so the result does not depend on the order the caller happened to
     # fetch rows in. The label matters here: it is stored per row but names the
-    # asset's rule set as a whole, so when rows disagree the lowest expiry wins
-    # -- an arbitrary rule, but a FIXED one. A label that flip-flopped with
-    # query order would make two identical configs look like two rule sets.
-    # (Correctness never rests on this: the fingerprint covers every expiry.)
-    for row in sorted(rows, key=lambda r: r.get("expiry_minutes") or 0, reverse=True):
-        expiry = row.get("expiry_minutes")
+    # asset's rule set as a whole, so when rows disagree the shortest expiry
+    # wins -- an arbitrary rule, but a FIXED one. A label that flip-flopped
+    # with query order would make two identical configs look like two rule
+    # sets. (Correctness never rests on this: the fingerprint covers every
+    # expiry.)
+    def sort_key(row: Mapping) -> int:
+        return row_expiry_seconds(row) or 0
+
+    for row in sorted(rows, key=sort_key, reverse=True):
+        expiry = row_expiry_seconds(row)
         if expiry not in by_expiry:
             continue
         base = by_expiry[expiry]
@@ -275,7 +341,7 @@ def strategy_from_rows(
         score = row.get("min_technical_score")
         enabled = row.get("enabled")
         by_expiry[expiry] = StrategyConfig(
-            expiry_minutes=expiry,
+            expiry_seconds=expiry,
             min_technical_score=int(score) if score is not None else base.min_technical_score,
             allowed_regimes=frozenset(regimes) if regimes else base.allowed_regimes,
             allowed_sessions=frozenset(sessions) if sessions else base.allowed_sessions,

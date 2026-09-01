@@ -5,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DirectionBadge, GradeBadge } from "@/components/shared/badges";
-import { formatDateTimeUTC, formatPercent } from "@/lib/utils";
+import { expirySecondsOf, formatDateTimeUTC, formatExpiry, formatPercent } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +55,7 @@ export default async function AdminSignalsPage() {
                       <TableCell><DirectionBadge direction={s.direction} /></TableCell>
                       <TableCell className="font-mono-tabular">{s.confidence !== null ? formatPercent(s.confidence) : "—"}</TableCell>
                       <TableCell><GradeBadge grade={s.grade} /></TableCell>
-                      <TableCell>{s.expiryMinutes ? `${s.expiryMinutes}m` : "—"}</TableCell>
+                      <TableCell>{formatExpiry(expirySecondsOf(s))}</TableCell>
                       <TableCell className={s.result === "WON" ? "text-call" : s.result === "LOST" ? "text-put" : "text-muted-foreground"}>{s.result}</TableCell>
                     </TableRow>
                   ))}

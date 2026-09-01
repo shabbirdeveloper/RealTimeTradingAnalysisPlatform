@@ -5,7 +5,7 @@ import { DirectionBadge, GradeBadge, RegimeBadge } from "@/components/shared/bad
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { Signal } from "@/types";
-import { cn, formatCountdown, formatDateTimeUTC, formatPrice } from "@/lib/utils";
+import { cn, expirySecondsOf, formatCountdown, formatDateTimeUTC, formatExpiry, formatPrice } from "@/lib/utils";
 import { Clock, Sparkles } from "lucide-react";
 
 export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now: Date; index?: number }) {
@@ -51,7 +51,7 @@ export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now
           <>
             <div className="grid grid-cols-2 gap-4 rounded-lg border border-border/70 bg-secondary/20 p-3.5 sm:grid-cols-4">
               <Metric label="Confidence" value={signal.confidence !== null ? <AnimatedNumber value={signal.confidence} suffix="%" /> : "N/A"} />
-              <Metric label="Expiry" value={`${signal.expiryMinutes} min`} />
+              <Metric label="Expiry" value={formatExpiry(expirySecondsOf(signal))} />
               <Metric label="Entry" value={signal.entryPrice ? formatPrice(signal.entryPrice, cfg.pipDecimal) : "—"} />
               <Metric
                 label="Valid for"

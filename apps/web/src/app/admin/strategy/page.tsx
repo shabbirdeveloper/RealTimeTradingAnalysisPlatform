@@ -2,7 +2,7 @@ import { getStrategyReport, STRATEGY_DEFAULTS } from "@/lib/admin";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { formatDateTimeUTC } from "@/lib/utils";
+import { formatDateTimeUTC, formatExpiry } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -82,9 +82,9 @@ export default async function AdminStrategyPage() {
               </TableHeader>
               <TableBody>
                 {report.overrides.map((o) => (
-                  <TableRow key={`${o.asset}-${o.expiryMinutes}`}>
+                  <TableRow key={`${o.asset}-${o.expirySeconds}`}>
                     <TableCell className="font-medium text-foreground">{o.asset}</TableCell>
-                    <TableCell>{o.expiryMinutes}m</TableCell>
+                    <TableCell>{formatExpiry(o.expirySeconds)}</TableCell>
                     <TableCell className="font-mono-tabular">
                       {o.enabled ? o.minTechnicalScore : <Badge variant="destructive">disabled</Badge>}
                     </TableCell>
@@ -169,9 +169,11 @@ export default async function AdminStrategyPage() {
             separable even if the label is left unchanged.
           </p>
           <pre className="overflow-x-auto rounded-md border border-border bg-secondary/20 p-3 text-xs leading-relaxed">
-{`insert into strategy_configs (asset_id, expiry_minutes, min_technical_score, label)
-select id, 15, 84, 'v2-tighter-gold' from assets where symbol = 'XAUUSD'
-on conflict (asset_id, expiry_minutes) do update
+{`-- expiry_seconds, not minutes: 900 = 15m. OTC horizons are 15-180s,
+-- which the old minutes column could not express at all.
+insert into strategy_configs (asset_id, expiry_seconds, min_technical_score, label)
+select id, 900, 84, 'v3-tighter-gold' from assets where symbol = 'XAUUSD'
+on conflict (asset_id, expiry_seconds) do update
   set min_technical_score = excluded.min_technical_score,
       label               = excluded.label,
       updated_at          = now();`}

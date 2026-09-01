@@ -152,6 +152,7 @@ function expiryCandidateFor(asset: AssetSymbol, now: Date, expiry: ExpiryMinutes
 
   return {
     expiryMinutes: expiry,
+    expirySeconds: expiry * 60,
     direction,
     technicalScore,
     modelConfidence,
@@ -201,6 +202,7 @@ export function generateSignal(asset: AssetSymbol, now: Date): Signal {
       technicalScore: 0,
       grade: "REJECTED",
       expiryMinutes: null,
+      expirySeconds: null,
       marketRegime: regime,
       generatedAt: now.toISOString(),
       entryPrice: null,
@@ -230,6 +232,7 @@ export function generateSignal(asset: AssetSymbol, now: Date): Signal {
       technicalScore: Math.max(...candidates.map((c) => c.technicalScore)),
       grade: "REJECTED",
       expiryMinutes: null,
+      expirySeconds: null,
       marketRegime: regime,
       generatedAt: now.toISOString(),
       entryPrice: null,
@@ -265,6 +268,7 @@ export function generateSignal(asset: AssetSymbol, now: Date): Signal {
     technicalScore: best.technicalScore,
     grade: best.grade,
     expiryMinutes: best.expiryMinutes,
+    expirySeconds: best.expiryMinutes * 60,
     marketRegime: regime,
     generatedAt: now.toISOString(),
     entryPrice: snapshot.price,

@@ -20,7 +20,7 @@ from __future__ import annotations
 IDENTITY_FIELDS = (
     "direction",
     "grade",
-    "expiry_minutes",
+    "expiry_seconds",
     "market_regime",
     "primary_note",
     "strategy_version",
@@ -45,7 +45,7 @@ def primary_note(reasons: list[str] | None, warnings: list[str] | None) -> str:
 def fingerprint(
     direction: str,
     grade: str,
-    expiry_minutes: int | None,
+    expiry_seconds: int | None,
     market_regime: str,
     note: str,
     strategy_version: str = "",
@@ -71,7 +71,7 @@ def fingerprint(
     return (
         direction,
         grade,
-        expiry_minutes,
+        expiry_seconds,
         market_regime,
         (note or "")[:_NOTE_COMPARE_CHARS],
         strategy_version or "",

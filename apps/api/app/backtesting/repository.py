@@ -113,7 +113,8 @@ def save_results(backtest_id: str, summary: BacktestSummary) -> None:
             "direction": o.direction,
             "generated_at": o.generated_at.isoformat(),
             "entry_price": str(o.entry_price) if o.entry_price is not None else None,
-            "expiry_minutes": o.expiry_minutes,
+            "expiry_minutes": o.expiry_seconds // 60 if o.expiry_seconds and o.expiry_seconds % 60 == 0 else None,
+            "expiry_seconds": o.expiry_seconds,
             "technical_score": o.technical_score,
             "calibrated_confidence": None,  # Phase 6 (ML) not built -- never fabricated
             "grade": o.grade,

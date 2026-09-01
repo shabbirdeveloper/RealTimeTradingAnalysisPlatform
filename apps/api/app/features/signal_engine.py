@@ -29,16 +29,16 @@ from app.features import structure as struct
 from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
 from app.features.regime import classify_regime
 from app.market_data.closed_bars import interval_seconds
-from app.instruments import FeedDescriptor, assert_feed_matches_instrument
+from app.instruments import FeedDescriptor, TradingProfile, assert_feed_matches_instrument
 from app.news.blackout import BlackoutConfig, EconomicEvent, evaluate_blackout
 from app.features.strategy import (
     AssetStrategy,
     default_strategy,
+    format_expiry,
     summarize_overrides,
     version_string,
 )
 
-EXPIRIES = (15, 30, 60)
 
 # Kept as a module constant because the backtester, the tests and the admin UI
 # all need to name "the shipped default" somewhere. The live threshold now
@@ -46,20 +46,20 @@ EXPIRIES = (15, 30, 60)
 # default value. See strategy.py for why that indirection exists.
 TECHNICAL_SCORE_TAKE_THRESHOLD = 78  # matches apps/web's gradeFromConfidence() B cutoff
 
-# How old the newest M5 candle may be before the engine refuses to decide.
-# Spec section 42 requires signal generation to pause on stale data.
+# Staleness limits now live on the instrument's TradingProfile
+# (`max_data_age_seconds`), because the right limit is a property of the
+# timeframe being traded: 15 minutes of staleness is a minor gap on an M5
+# real-market ladder and an eternity on a 15-second OTC one. Both profiles
+# use three closed entry bars.
 #
-# Three closed M5 bars. Tight enough that a stalled collector, a provider
-# outage, or a market gap is caught within ~15 minutes; loose enough to
-# tolerate one missed poll without going dark. Deliberately NOT derived from
-# the poll interval -- data freshness is a property of the market feed, not
-# of how often we happen to ask for it.
+# Kept as a module constant only so the backtester and tests can name the
+# historical real-market value.
 MAX_CANDLE_AGE_MINUTES = 15
 
 
 @dataclass(frozen=True)
 class ExpiryCandidate:
-    expiry_minutes: int
+    expiry_seconds: int
     direction: str
     technical_score: int
     grade: str  # "B" | "REJECTED" -- never higher without calibrated confidence
@@ -77,7 +77,7 @@ class SignalDecision:
     direction: str  # CALL | PUT | NO_TRADE
     technical_score: int
     grade: str
-    expiry_minutes: int | None
+    expiry_seconds: int | None
     market_regime: str
     regime_reason: str
     entry_price: float
@@ -107,7 +107,7 @@ class SignalDecision:
 
 
 def _staleness_reason(
-    m5_candles: list[dict], now: datetime, max_age_minutes: int,
+    entry_candles: list[dict], now: datetime, max_age_minutes: float,
     entry_timeframe: str = "M5",
 ) -> str | None:
     """None when the newest candle is fresh enough to decide on, otherwise a
@@ -117,10 +117,10 @@ def _staleness_reason(
     a bar that opened 6 minutes ago closed 1 minute ago and is perfectly
     current. Measuring from open_time would reject healthy data.
     """
-    if not m5_candles:
-        return "No M5 candles available — cannot analyse."
+    if not entry_candles:
+        return f"No {entry_timeframe} candles available — cannot analyse."
 
-    newest_open = m5_candles[-1].get("open_time")
+    newest_open = entry_candles[-1].get("open_time")
     if newest_open is None:
         return "Newest candle has no timestamp — cannot establish data freshness."
     if newest_open.tzinfo is None:
@@ -132,7 +132,7 @@ def _staleness_reason(
     if age_minutes > max_age_minutes:
         return (
             f"Market data is stale — newest candle closed {int(age_minutes)} min ago "
-            f"(limit {max_age_minutes} min). Signal generation paused until the feed recovers."
+            f"(limit {max_age_minutes:.0f} min). Signal generation paused until the feed recovers."
         )
     return None
 
@@ -141,18 +141,44 @@ def _bias_label(direction: str) -> str:
     return {"CALL": "BULLISH", "PUT": "BEARISH"}.get(direction, "NEUTRAL")
 
 
-def _expiry_weight(expiry_minutes: int, timeframe: str) -> float:
-    """15m entries lean on the fast timeframes (M5/M15); 60m entries lean
-    on the slow ones (H1/H4). This is the same "which timeframe matters
-    most for which expiry" idea as spec section 11's independent-model
-    architecture, expressed as a weighting rule rather than a separate
-    trained model per expiry (those don't exist yet either).
+def _expiry_weight(
+    expiry_seconds: int, timeframe: str, profile: TradingProfile
+) -> float:
+    """How much a timeframe should count toward a given expiry.
+
+    The shortest expiry on offer leans on the fastest timeframes; the longest
+    leans on the slowest. Spec section 11's "independent model per expiry"
+    idea, expressed as a weighting rule rather than a trained model (which
+    doesn't exist yet).
+
+    This used to be a lookup keyed on the literal values 15/30/60. That could
+    not express OTC's five second-scale horizons at all, and any expiry not
+    in the table silently fell through to the neutral weights. It is now
+    computed from where the expiry sits in the profile's own range and where
+    the timeframe sits in the profile's ladder, so it works for any instrument
+    class without a table to keep in sync.
     """
-    fast = {"M5": 1.4, "M15": 1.2, "H1": 0.8, "H4": 0.6}
-    slow = {"M5": 0.6, "M15": 0.8, "H1": 1.2, "H4": 1.4}
-    mid = {"M5": 1.0, "M15": 1.0, "H1": 1.0, "H4": 1.0}
-    table = fast if expiry_minutes == 15 else slow if expiry_minutes == 60 else mid
-    return table[timeframe]
+    expiries = sorted(profile.expiries_seconds)
+    ladder = profile.timeframes
+
+    # 0.0 = shortest expiry offered, 1.0 = longest -- by RANK, not by value.
+    #
+    # Rank rather than linear interpolation on the numbers, because the
+    # numbers are not evenly spaced: 1800s sits a third of the way between
+    # 900 and 3600, so a value-based scale would quietly re-weight the
+    # 30-minute expiry that has been running unchanged. Rank reproduces the
+    # previous fast/mid/slow table exactly for real markets while still
+    # generalising to OTC's five horizons.
+    rank = expiries.index(expiry_seconds) if expiry_seconds in expiries else len(expiries) // 2
+    horizon = 0.5 if len(expiries) == 1 else rank / (len(expiries) - 1)
+
+    # 0.0 = slowest timeframe in the ladder, 1.0 = fastest.
+    idx = ladder.index(timeframe)
+    speed = idx / (len(ladder) - 1) if len(ladder) > 1 else 0.5
+
+    # A short horizon favours fast timeframes and vice versa. The 0.4 spread
+    # reproduces the old table's 0.6-1.4 range at the extremes.
+    return 1.0 + 0.4 * (1.0 - 2.0 * horizon) * (2.0 * speed - 1.0)
 
 
 def build_signal(
@@ -166,7 +192,7 @@ def build_signal(
     economic_events: list[EconomicEvent] | None = None,
     calendar_available: bool = False,
     blackout_config: BlackoutConfig | None = None,
-    max_candle_age_minutes: int = MAX_CANDLE_AGE_MINUTES,
+    max_candle_age_minutes: float | None = None,
 ) -> SignalDecision:
     """`strategy` is the per-expiry rule set for this asset (thresholds,
     permitted regimes, permitted sessions). Omit it and the shipped
@@ -203,7 +229,8 @@ def build_signal(
     # from a fiction that looks identical.
     instrument = assert_feed_matches_instrument(asset, feed)
 
-    strategy = strategy or default_strategy(asset)
+    profile = instrument.profile
+    strategy = strategy or default_strategy(asset, expiries=profile.expiries_seconds)
     if technical_score_threshold is not None:
         strategy = strategy.with_min_score(technical_score_threshold)
     # Computed once, before any return path, so every decision this call can
@@ -219,18 +246,21 @@ def build_signal(
 
     timeframes: list[TimeframeBias] = [
         bias_for_timeframe(tf, candles_by_timeframe.get(tf, []))
-        for tf in ("H4", "H1", "M15", "M5")
+        for tf in profile.timeframes
     ]
-    tf_by_name = {t.timeframe: t for t in timeframes}
 
-    h1_candles = candles_by_timeframe.get("H1", [])
+    # Structure and regime come from the ladder's second-slowest rung: slow
+    # enough to describe context, fast enough to still be responsive. On the
+    # real-market ladder that is H1, exactly as before; on OTC it is M1.
+    context_timeframe = profile.timeframes[1] if len(profile.timeframes) > 1 else profile.timeframes[0]
+    h1_candles = candles_by_timeframe.get(context_timeframe, [])
     h1_structure = struct.classify_structure(h1_candles) if h1_candles else struct.StructureReading(
         sequence=None, bos=False, choch=False, support=None, resistance=None
     )
     regime, regime_reason = classify_regime(h1_candles, h1_structure) if h1_candles else ("UNSTABLE", "No H1 history yet.")
 
-    m5_candles = candles_by_timeframe.get("M5", [])
-    entry_price = float(m5_candles[-1]["close"]) if m5_candles else 0.0
+    entry_candles = candles_by_timeframe.get(profile.entry_timeframe, [])
+    entry_price = float(entry_candles[-1]["close"]) if entry_candles else 0.0
 
     reasons: list[str] = []
 
@@ -256,12 +286,17 @@ def build_signal(
     # graded signal. The frontend shows a freshness badge, which makes an
     # ungated engine actively misleading: the UI implies a check the engine
     # never performed.
-    stale_reason = _staleness_reason(m5_candles, now, max_candle_age_minutes)
+    stale_reason = _staleness_reason(
+        entry_candles, now,
+        max_candle_age_minutes if max_candle_age_minutes is not None
+        else profile.max_data_age_seconds / 60,
+        profile.entry_timeframe,
+    )
     if stale_reason is not None:
         warnings.append(stale_reason)
         return SignalDecision(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED",
-            expiry_minutes=None, market_regime="UNSTABLE", regime_reason=stale_reason,
+            expiry_seconds=None, market_regime="UNSTABLE", regime_reason=stale_reason,
             entry_price=entry_price, session=session,
             reasons=["Market data is not fresh enough to analyse."],
             warnings=warnings + standing, timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
@@ -281,7 +316,7 @@ def build_signal(
         # generation outright rather than scoring through it.
         warnings.append(blackout.reason or "High-impact news window active — signal generation paused.")
         return SignalDecision(
-            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
+            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime="NEWS_MODE", regime_reason=blackout.reason or "High-impact news window.",
             entry_price=entry_price, session=session,
             reasons=["Signal generation paused around a high-impact news release."],
@@ -294,7 +329,7 @@ def build_signal(
     if insufficient:
         warnings.append(f"Not enough real candle history yet on {', '.join(insufficient)} — analysis will sharpen as more real candles accumulate.")
         return SignalDecision(
-            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
+            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Insufficient real history to analyze this asset yet."], warnings=warnings + standing,
             timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
@@ -314,14 +349,13 @@ def build_signal(
         proposed_direction = "NO_TRADE"
 
     if proposed_direction == "NO_TRADE":
-        h4, h1, m15, m5 = tf_by_name["H4"], tf_by_name["H1"], tf_by_name["M15"], tf_by_name["M5"]
         if regime not in ("HIGH_VOLATILITY", "UNSTABLE"):
-            warnings.append(
-                f"Timeframes conflicting: H4 {h4.bias.lower()}, H1 {h1.bias.lower()}, "
-                f"M15 {m15.bias.lower()}, M5 {m5.bias.lower()}."
-            )
+            # Built from the profile's own ladder rather than naming H4/H1/
+            # M15/M5, which do not exist on an OTC instrument.
+            detail = ", ".join(f"{t.timeframe} {t.bias.lower()}" for t in timeframes)
+            warnings.append(f"Timeframes conflicting: {detail}.")
         return SignalDecision(
-            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_minutes=None,
+            asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Market conditions not strong enough for a high-quality setup."], warnings=warnings + standing,
             timeframes=timeframes, candidates=[], generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
@@ -332,10 +366,10 @@ def build_signal(
     avg_strength = sum(t.strength for t in timeframes) / len(timeframes)
 
     candidates: list[ExpiryCandidate] = []
-    for expiry in EXPIRIES:
-        weighted_strength = sum(t.strength * _expiry_weight(expiry, t.timeframe) for t in timeframes) / sum(
-            _expiry_weight(expiry, t.timeframe) for t in timeframes
-        )
+    for expiry in strategy.expiries:
+        weighted_strength = sum(
+            t.strength * _expiry_weight(expiry, t.timeframe, profile) for t in timeframes
+        ) / sum(_expiry_weight(expiry, t.timeframe, profile) for t in timeframes)
         score = weighted_strength * 0.7 + len(aligned) * 6
         if regime in ("TRENDING_UP", "TRENDING_DOWN"):
             score += 6
@@ -352,7 +386,7 @@ def build_signal(
         reason = cfg.rejection_reason(regime=regime, session=session, technical_score=score)
         candidates.append(
             ExpiryCandidate(
-                expiry_minutes=expiry,
+                expiry_seconds=expiry,
                 direction=proposed_direction,
                 technical_score=score,
                 grade="REJECTED" if reason else "B",
@@ -373,17 +407,22 @@ def build_signal(
         warnings.append(f"No expiry accepted — {blockers}")
         return SignalDecision(
             asset=asset, direction="NO_TRADE", technical_score=max(c.technical_score for c in candidates),
-            grade="REJECTED", expiry_minutes=None, market_regime=regime, regime_reason=regime_reason,
+            grade="REJECTED", expiry_seconds=None, market_regime=regime, regime_reason=regime_reason,
             entry_price=entry_price, session=session,
             reasons=["Directional bias present but no expiry scored high enough to act on."], warnings=warnings + standing,
             timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
             rejected_opportunity_direction=proposed_direction,
         )
 
-    h4, h1 = tf_by_name["H4"], tf_by_name["H1"]
-    if h4.bias == h1.bias == target_bias:
-        reasons.append(f"H4 and H1 both {h4.bias.lower()} — trend alignment confirmed.")
-    reasons.append(f"{len(aligned)}/4 timeframes aligned {('bullish' if proposed_direction == 'CALL' else 'bearish')}.")
+    # The two slowest rungs carry trend context, whatever they are called on
+    # this instrument: H4/H1 on a real-market ladder, M5/M1 on an OTC one.
+    slow, mid = timeframes[0], timeframes[1]
+    if slow.bias == mid.bias == target_bias:
+        reasons.append(
+            f"{slow.timeframe} and {mid.timeframe} both {slow.bias.lower()} — "
+            "trend alignment confirmed."
+        )
+    reasons.append(f"{len(aligned)}/{len(timeframes)} timeframes aligned {('bullish' if proposed_direction == 'CALL' else 'bearish')}.")
     reasons.append(f"Market regime: {regime.replace('_', ' ').lower()} — {regime_reason}")
     overrides = summarize_overrides(strategy)
     if overrides:
@@ -399,7 +438,7 @@ def build_signal(
 
     return SignalDecision(
         asset=asset, direction=proposed_direction, technical_score=best.technical_score, grade=best.grade,
-        expiry_minutes=best.expiry_minutes, market_regime=regime, regime_reason=regime_reason,
+        expiry_seconds=best.expiry_seconds, market_regime=regime, regime_reason=regime_reason,
         entry_price=entry_price, session=session, reasons=reasons, warnings=warnings + standing,
         timeframes=timeframes, candidates=candidates, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
     )

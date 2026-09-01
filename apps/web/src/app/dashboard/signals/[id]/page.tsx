@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { CountdownBadge } from "@/components/dashboard/countdown";
 import { MiniPriceChart } from "@/components/dashboard/mini-price-chart";
-import { formatDateTimeUTC, formatPercent, formatPrice } from "@/lib/utils";
+import { expirySecondsOf, formatDateTimeUTC, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowLeft, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
 
 export default async function SignalDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -49,7 +49,7 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Field label="Generated" value={formatDateTimeUTC(signal.generatedAt)} />
             <Field label="Entry price" value={signal.entryPrice ? formatPrice(signal.entryPrice, cfg.pipDecimal) : "—"} />
-            <Field label="Expiry" value={signal.expiryMinutes ? `${signal.expiryMinutes} min` : "—"} />
+            <Field label="Expiry" value={formatExpiry(expirySecondsOf(signal))} />
             <Field label="Closing price" value={signal.closingPrice ? formatPrice(signal.closingPrice, cfg.pipDecimal) : "—"} />
             <Field label="Technical score" value={`${signal.technicalScore}/100`} />
             <Field label="Model confidence" value={signal.confidence !== null ? formatPercent(signal.confidence) : "Not available"} />

@@ -136,7 +136,7 @@ class TestNewsProtection(unittest.TestCase):
         # is caused by the blackout, not by weak conditions.
         self.assertEqual(decision.direction, "NO_TRADE")
         self.assertEqual(decision.market_regime, "NEWS_MODE")
-        self.assertIsNone(decision.expiry_minutes)
+        self.assertIsNone(decision.expiry_seconds)
         self.assertTrue(any("US CPI" in w for w in decision.warnings))
 
     def test_same_history_trades_when_the_news_is_far_away(self):
@@ -257,7 +257,7 @@ class TestStalenessGate(unittest.TestCase):
         decision = build_signal("XAUUSD", self._history(now), now=now + timedelta(hours=3))
         self.assertEqual(decision.direction, "NO_TRADE")
         self.assertEqual(decision.grade, "REJECTED")
-        self.assertIsNone(decision.expiry_minutes)
+        self.assertIsNone(decision.expiry_seconds)
         self.assertTrue(any("stale" in w.lower() for w in decision.warnings))
 
     def test_age_is_measured_from_candle_close_not_open(self):
@@ -301,7 +301,7 @@ class TestStalenessGate(unittest.TestCase):
         stale entry price. Assert nothing actionable escapes."""
         now = datetime.now(timezone.utc)
         decision = build_signal("XAUUSD", self._history(now), now=now + timedelta(hours=6))
-        self.assertIsNone(decision.expiry_minutes)
+        self.assertIsNone(decision.expiry_seconds)
         self.assertEqual(decision.technical_score, 0)
         self.assertEqual(decision.candidates, [])
         self.assertIsNone(decision.rejected_opportunity_direction)

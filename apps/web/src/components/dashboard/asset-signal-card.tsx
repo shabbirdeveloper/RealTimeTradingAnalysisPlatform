@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { DataStatus, Signal } from "@/types";
-import { formatPrice, formatPercent, cn } from "@/lib/utils";
+import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 
 export function AssetSignalCard({
@@ -101,7 +101,7 @@ export function AssetSignalCard({
                 </div>
                 <div className="text-right">
                   <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Best expiry</p>
-                  <p className="font-mono-tabular text-lg font-semibold text-foreground">{signal.expiryMinutes} min</p>
+                  <p className="font-mono-tabular text-lg font-semibold text-foreground">{formatExpiry(expirySecondsOf(signal))}</p>
                 </div>
               </div>
             </div>

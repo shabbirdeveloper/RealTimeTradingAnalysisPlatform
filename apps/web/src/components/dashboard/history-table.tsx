@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { DirectionBadge, GradeBadge } from "@/components/shared/badges";
-import { formatDateTimeUTC, formatPercent, formatPrice } from "@/lib/utils";
+import { expirySecondsOf, formatDateTimeUTC, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import type { HistoryRow } from "@/lib/history";
 
 const ALL = "ALL";
@@ -76,7 +76,7 @@ export function HistoryTable({ rows }: { rows: HistoryRow[] }) {
                   <TableCell><DirectionBadge direction={s.direction} /></TableCell>
                   <TableCell className="font-mono-tabular">{s.confidence !== null ? formatPercent(s.confidence) : "—"}</TableCell>
                   <TableCell><GradeBadge grade={s.grade} /></TableCell>
-                  <TableCell>{s.expiryMinutes ? `${s.expiryMinutes}m` : "—"}</TableCell>
+                  <TableCell>{formatExpiry(expirySecondsOf(s))}</TableCell>
                   <TableCell className="font-mono-tabular">{s.entryPrice ? formatPrice(s.entryPrice, ASSET_CONFIGS[s.asset].pipDecimal) : "—"}</TableCell>
                   <TableCell className="font-mono-tabular">{s.closingPrice ? formatPrice(s.closingPrice, ASSET_CONFIGS[s.asset].pipDecimal) : "—"}</TableCell>
                   <TableCell className={s.result === "WON" ? "font-medium text-call" : s.result === "LOST" ? "font-medium text-put" : "text-muted-foreground"}>{s.result}</TableCell>

@@ -21,7 +21,7 @@ def _tuned(asset: str, expiry: int, **kwargs) -> AssetStrategy:
     """Stock strategy with one expiry's config replaced."""
     base = default_strategy(asset)
     by_expiry = dict(base.by_expiry)
-    by_expiry[expiry] = StrategyConfig(expiry_minutes=expiry, **kwargs)
+    by_expiry[expiry] = StrategyConfig(expiry_seconds=expiry, **kwargs)
     return AssetStrategy(asset=asset, label=base.label, by_expiry=by_expiry)
 
 
@@ -31,7 +31,7 @@ class DefaultsAreABaseline(unittest.TestCase):
     history accumulating now is not comparable to anything measured later."""
 
     def test_defaults_match_the_engines_historical_constants(self):
-        for expiry in (15, 30, 60):
+        for expiry in (900, 1800, 3600):
             cfg = default_strategy("XAUUSD").for_expiry(expiry)
             self.assertEqual(cfg.min_technical_score, 78)
             self.assertEqual(cfg.allowed_regimes, ALL_REGIMES)
@@ -39,7 +39,7 @@ class DefaultsAreABaseline(unittest.TestCase):
             self.assertTrue(cfg.enabled)
 
     def test_default_config_never_declines_on_regime_or_session(self):
-        cfg = default_strategy("XAUUSD").for_expiry(30)
+        cfg = default_strategy("XAUUSD").for_expiry(1800)
         for regime in ALL_REGIMES:
             for session in ALL_SESSIONS:
                 self.assertIsNone(
@@ -56,14 +56,14 @@ class DefaultsAreABaseline(unittest.TestCase):
         explicit = build_signal("XAUUSD", history, now=now, strategy=default_strategy("XAUUSD"))
         self.assertEqual(implicit.direction, explicit.direction)
         self.assertEqual(implicit.technical_score, explicit.technical_score)
-        self.assertEqual(implicit.expiry_minutes, explicit.expiry_minutes)
+        self.assertEqual(implicit.expiry_seconds, explicit.expiry_seconds)
         self.assertEqual(implicit.strategy_version, explicit.strategy_version)
 
 
 class VersionStamping(unittest.TestCase):
     def test_every_signal_carries_a_version(self):
         d = build_signal("XAUUSD", _trending("XAUUSD"), now=datetime.now(timezone.utc))
-        self.assertTrue(d.strategy_version.startswith("v1:"))
+        self.assertTrue(d.strategy_version.startswith("v2:"))
 
     def test_no_trade_paths_are_stamped_too(self):
         """A decision that exits early through the staleness gate is still
@@ -73,15 +73,15 @@ class VersionStamping(unittest.TestCase):
         stale = _trending("XAUUSD", ending_at=now - timedelta(hours=4))
         d = build_signal("XAUUSD", stale, now=now)
         self.assertEqual(d.direction, "NO_TRADE")
-        self.assertTrue(d.strategy_version.startswith("v1:"))
+        self.assertTrue(d.strategy_version.startswith("v2:"))
 
     def test_changing_any_knob_changes_the_fingerprint(self):
         base = default_strategy("XAUUSD")
         variants = [
-            _tuned("XAUUSD", 30, min_technical_score=85),
-            _tuned("XAUUSD", 30, enabled=False),
-            _tuned("XAUUSD", 30, allowed_regimes=frozenset({"TRENDING_UP"})),
-            _tuned("XAUUSD", 30, allowed_sessions=frozenset({"LONDON"})),
+            _tuned("XAUUSD", 1800, min_technical_score=85),
+            _tuned("XAUUSD", 1800, enabled=False),
+            _tuned("XAUUSD", 1800, allowed_regimes=frozenset({"TRENDING_UP"})),
+            _tuned("XAUUSD", 1800, allowed_sessions=frozenset({"LONDON"})),
         ]
         seen = {fingerprint(base)}
         for v in variants:
@@ -93,7 +93,7 @@ class VersionStamping(unittest.TestCase):
         """The label is for humans; the fingerprint is what guarantees
         attribution. Forgetting to relabel must cost clarity, not correctness."""
         stock = default_strategy("XAUUSD")
-        tuned = _tuned("XAUUSD", 15, min_technical_score=88)
+        tuned = _tuned("XAUUSD", 900, min_technical_score=88)
         self.assertEqual(stock.label, tuned.label)
         self.assertNotEqual(version_string(stock), version_string(tuned))
 
@@ -107,8 +107,8 @@ class VersionStamping(unittest.TestCase):
         )
 
     def test_fingerprint_is_stable_across_set_ordering(self):
-        a = _tuned("XAUUSD", 30, allowed_sessions=frozenset({"LONDON", "NEW_YORK"}))
-        b = _tuned("XAUUSD", 30, allowed_sessions=frozenset({"NEW_YORK", "LONDON"}))
+        a = _tuned("XAUUSD", 1800, allowed_sessions=frozenset({"LONDON", "NEW_YORK"}))
+        b = _tuned("XAUUSD", 1800, allowed_sessions=frozenset({"NEW_YORK", "LONDON"}))
         self.assertEqual(fingerprint(a), fingerprint(b))
 
 
@@ -120,7 +120,7 @@ class GatesNarrowButNeverWiden(unittest.TestCase):
 
         strict = AssetStrategy(
             asset="XAUUSD", label="v1",
-            by_expiry={e: StrategyConfig(expiry_minutes=e, min_technical_score=99) for e in (15, 30, 60)},
+            by_expiry={e: StrategyConfig(expiry_seconds=e, min_technical_score=99) for e in (900, 1800, 3600)},
         )
         declined = build_signal("XAUUSD", history, now=now, strategy=strict)
         self.assertEqual(declined.direction, "NO_TRADE")
@@ -138,10 +138,10 @@ class GatesNarrowButNeverWiden(unittest.TestCase):
             asset="XAUUSD", label="v1",
             by_expiry={
                 e: StrategyConfig(
-                    expiry_minutes=e,
+                    expiry_seconds=e,
                     allowed_sessions=frozenset(ALL_SESSIONS - {blocked_session}),
                 )
-                for e in (15, 30, 60)
+                for e in (900, 1800, 3600)
             },
         )
         d = build_signal("XAUUSD", history, now=now, strategy=strategy)
@@ -159,13 +159,13 @@ class GatesNarrowButNeverWiden(unittest.TestCase):
         strategy = AssetStrategy(
             asset="XAUUSD", label="v1",
             by_expiry={
-                15: StrategyConfig(expiry_minutes=15, allowed_sessions=frozenset(ALL_SESSIONS - {session})),
-                30: StrategyConfig(expiry_minutes=30, min_technical_score=99),
-                60: StrategyConfig(expiry_minutes=60, enabled=False),
+                15: StrategyConfig(expiry_seconds=15, allowed_sessions=frozenset(ALL_SESSIONS - {session})),
+                30: StrategyConfig(expiry_seconds=30, min_technical_score=99),
+                60: StrategyConfig(expiry_seconds=60, enabled=False),
             },
         )
         d = build_signal("XAUUSD", history, now=now, strategy=strategy)
-        by_expiry = {c.expiry_minutes: c.rejection_reason for c in d.candidates}
+        by_expiry = {c.expiry_seconds: c.rejection_reason for c in d.candidates}
         self.assertIn("session is not permitted", by_expiry[15])
         self.assertIn("below the 99 minimum", by_expiry[30])
         self.assertIn("disabled", by_expiry[60])
@@ -179,8 +179,8 @@ class GatesNarrowButNeverWiden(unittest.TestCase):
         permissive = AssetStrategy(
             asset="XAUUSD", label="v1",
             by_expiry={
-                e: StrategyConfig(expiry_minutes=e, min_technical_score=0, allowed_regimes=ALL_REGIMES)
-                for e in (15, 30, 60)
+                e: StrategyConfig(expiry_seconds=e, min_technical_score=0, allowed_regimes=ALL_REGIMES)
+                for e in (900, 1800, 3600)
             },
         )
         d = build_signal("XAUUSD", history, now=now, strategy=permissive)
@@ -188,7 +188,7 @@ class GatesNarrowButNeverWiden(unittest.TestCase):
 
     def test_overrides_are_surfaced_on_an_accepted_signal(self):
         history, now = _trending("XAUUSD"), datetime.now(timezone.utc)
-        strategy = _tuned("XAUUSD", 60, min_technical_score=40)
+        strategy = _tuned("XAUUSD", 3600, min_technical_score=40)
         d = build_signal("XAUUSD", history, now=now, strategy=strategy)
         if d.direction in ("CALL", "PUT"):
             self.assertTrue(any("Strategy overrides in force" in r for r in d.reasons))
@@ -200,7 +200,7 @@ class GatesNarrowButNeverWiden(unittest.TestCase):
         history, now = _trending("XAUUSD"), datetime.now(timezone.utc)
         d = build_signal(
             "XAUUSD", history, now=now,
-            strategy=_tuned("XAUUSD", 30, min_technical_score=10),
+            strategy=_tuned("XAUUSD", 1800, min_technical_score=10),
             technical_score_threshold=99,
         )
         self.assertEqual(d.direction, "NO_TRADE")
@@ -217,16 +217,16 @@ class ConfigLoadedFromRows(unittest.TestCase):
 
     def test_a_partial_row_set_leaves_other_expiries_at_defaults(self):
         s = strategy_from_rows("XAUUSD", [{"expiry_minutes": 15, "min_technical_score": 90}])
-        self.assertEqual(s.for_expiry(15).min_technical_score, 90)
-        self.assertEqual(s.for_expiry(30).min_technical_score, 78)
-        self.assertEqual(s.for_expiry(60).min_technical_score, 78)
+        self.assertEqual(s.for_expiry(900).min_technical_score, 90)
+        self.assertEqual(s.for_expiry(1800).min_technical_score, 78)
+        self.assertEqual(s.for_expiry(3600).min_technical_score, 78)
 
     def test_null_columns_fall_back_per_field_not_per_row(self):
         s = strategy_from_rows("XAUUSD", [
             {"expiry_minutes": 30, "min_technical_score": 85,
              "allowed_regimes": None, "allowed_sessions": None, "enabled": None},
         ])
-        cfg = s.for_expiry(30)
+        cfg = s.for_expiry(1800)
         self.assertEqual(cfg.min_technical_score, 85)
         self.assertEqual(cfg.allowed_regimes, ALL_REGIMES)
         self.assertTrue(cfg.enabled)
@@ -237,7 +237,7 @@ class ConfigLoadedFromRows(unittest.TestCase):
 
     def test_enabled_false_survives_the_round_trip(self):
         s = strategy_from_rows("XAUUSD", [{"expiry_minutes": 60, "enabled": False}])
-        self.assertFalse(s.for_expiry(60).enabled)
+        self.assertFalse(s.for_expiry(3600).enabled)
 
     def test_label_comes_from_the_stored_rows(self):
         s = strategy_from_rows("XAUUSD", [{"expiry_minutes": 15, "label": "v2-tighter-gold"}])
@@ -250,24 +250,39 @@ class ConfigValidation(unittest.TestCase):
 
     def test_rejects_unknown_regime(self):
         with self.assertRaises(ValueError):
-            StrategyConfig(expiry_minutes=30, allowed_regimes=frozenset({"MOON_PHASE"}))
+            StrategyConfig(expiry_seconds=30, allowed_regimes=frozenset({"MOON_PHASE"}))
 
     def test_rejects_unknown_session(self):
         with self.assertRaises(ValueError):
-            StrategyConfig(expiry_minutes=30, allowed_sessions=frozenset({"TOKYO"}))
+            StrategyConfig(expiry_seconds=30, allowed_sessions=frozenset({"TOKYO"}))
 
     def test_rejects_out_of_range_score(self):
         with self.assertRaises(ValueError):
-            StrategyConfig(expiry_minutes=30, min_technical_score=140)
+            StrategyConfig(expiry_seconds=30, min_technical_score=140)
 
-    def test_rejects_unsupported_expiry(self):
+    def test_rejects_a_nonsensical_expiry(self):
+        """The valid SET is now a property of the instrument's profile, not a
+        global constant -- 45 seconds is legitimate for OTC and meaningless
+        for a real-market ladder. So only structurally impossible values are
+        rejected here; the per-instrument set is enforced by the profile."""
         with self.assertRaises(ValueError):
-            StrategyConfig(expiry_minutes=45)
+            StrategyConfig(expiry_seconds=0)
+        with self.assertRaises(ValueError):
+            StrategyConfig(expiry_seconds=-30)
 
-    def test_rejects_a_strategy_missing_an_expiry(self):
+    def test_a_single_expiry_strategy_is_legitimate(self):
+        """The valid expiry SET is now a property of the instrument's profile,
+        so a strategy is no longer required to carry exactly three. An admin
+        disabling all but one horizon is a normal configuration."""
+        one = AssetStrategy(asset="XAUUSD", label="v2",
+                            by_expiry={900: StrategyConfig(expiry_seconds=900)})
+        self.assertEqual(one.expiries, (900,))
+
+    def test_rejects_a_strategy_offering_no_expiries_at_all(self):
+        """This one can never fire, so it is a configuration mistake rather
+        than a deliberate narrowing."""
         with self.assertRaises(ValueError):
-            AssetStrategy(asset="XAUUSD", label="v1",
-                          by_expiry={15: StrategyConfig(expiry_minutes=15)})
+            AssetStrategy(asset="XAUUSD", label="v2", by_expiry={})
 
 
 class LabelResolutionIsOrderIndependent(unittest.TestCase):
@@ -300,8 +315,8 @@ class WarningsLeadWithTheActualBlocker(unittest.TestCase):
     def test_first_warning_is_not_a_standing_caveat(self):
         note = self._blocked(
             AssetStrategy(asset="XAUUSD", label="v1",
-                          by_expiry={e: StrategyConfig(expiry_minutes=e, min_technical_score=99)
-                                     for e in (15, 30, 60)})
+                          by_expiry={e: StrategyConfig(expiry_seconds=e, min_technical_score=99)
+                                     for e in (900, 1800, 3600)})
         )
         self.assertNotIn("Meta trade/no-trade model", note)
         self.assertNotIn("economic calendar feed", note)
@@ -311,15 +326,15 @@ class WarningsLeadWithTheActualBlocker(unittest.TestCase):
         session = build_signal("XAUUSD", history, now=now).session
         by_score = self._blocked(
             AssetStrategy(asset="XAUUSD", label="v1",
-                          by_expiry={e: StrategyConfig(expiry_minutes=e, min_technical_score=99)
-                                     for e in (15, 30, 60)})
+                          by_expiry={e: StrategyConfig(expiry_seconds=e, min_technical_score=99)
+                                     for e in (900, 1800, 3600)})
         )
         by_session = self._blocked(
             AssetStrategy(asset="XAUUSD", label="v1",
                           by_expiry={e: StrategyConfig(
-                              expiry_minutes=e,
+                              expiry_seconds=e,
                               allowed_sessions=frozenset(ALL_SESSIONS - {session}))
-                              for e in (15, 30, 60)})
+                              for e in (900, 1800, 3600)})
         )
         self.assertNotEqual(by_score, by_session)
         # Truncated comparison is what dedup actually uses, so they must differ
