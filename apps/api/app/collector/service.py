@@ -275,7 +275,16 @@ def _run_analysis_cycle(asset: Asset, provider: MarketDataProvider) -> None:
         # The decision itself, on one line. This is the thing the operator is
         # actually waiting to see, and it was only ever written to the
         # database -- so the console gave no sign the engine was thinking.
-        note = (decision.warnings or decision.reasons or [""])[0]
+        #
+        # Which list to quote depends on the outcome. A NO_TRADE is explained
+        # by what BLOCKED it (warnings); an accepted CALL/PUT is explained by
+        # what SUPPORTED it (reasons). Reading warnings first for an accepted
+        # signal surfaces the standing "meta model not available yet" caveat
+        # instead of the actual setup -- true, but not why this trade fired.
+        if decision.direction in ("CALL", "PUT"):
+            note = (decision.reasons or decision.warnings or [""])[0]
+        else:
+            note = (decision.warnings or decision.reasons or [""])[0]
         logger.info(
             "%s: %s %s score=%d regime=%s%s | %s",
             asset.value, decision.direction, decision.grade,
