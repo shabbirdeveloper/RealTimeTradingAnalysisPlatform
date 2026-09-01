@@ -21,6 +21,7 @@ from app.api.routes import debug as debug_routes
 from app.api.routes import health as health_routes
 from app.collector.scheduler import run_all_assets, start_scheduler, stop_scheduler
 from app.config import get_settings
+from app.keep_awake import allow_sleep, prevent_sleep
 from app.logging_setup import configure as configure_logging
 
 _LOG_PATH = configure_logging()
@@ -45,6 +46,17 @@ async def _on_startup() -> None:
         )
         return
 
+    # Ask Windows not to sleep. A sleeping machine collects nothing and
+    # leaves no error behind -- and the decisions missed in that window can
+    # never be backfilled, only the prices.
+    if prevent_sleep():
+        logger.info("sleep prevention active — the display can still turn off")
+    else:
+        logger.info(
+            "sleep prevention unavailable on this platform — if this machine "
+            "sleeps, collection stops and those gaps cannot be recovered"
+        )
+
     start_scheduler()
     # Kick off one poll immediately instead of waiting a full interval, so
     # system_health has real data right after startup. Respects market
@@ -56,3 +68,6 @@ async def _on_startup() -> None:
 @app.on_event("shutdown")
 async def _on_shutdown() -> None:
     stop_scheduler()
+    # Hand power management back: a background process that leaves sleep
+    # disabled forever is a bad neighbour.
+    allow_sleep()

@@ -97,6 +97,13 @@ The collector must run continuously — it accumulates candle history and
 resolves signals when they reach expiry. Every gap is history never collected
 and signals never scored, and both are unrecoverable after the fact.
 
+The collector also asks Windows not to sleep while it runs (the same API a
+media player uses). The display still turns off normally — keeping a monitor
+lit all night to collect candles would be a poor trade. This narrows the gap
+but does not close it: closing a laptop lid, hibernating, or choosing Sleep
+from the Start menu all still win. `check.bat` reports any gaps it finds, so
+you learn about one rather than silently trusting incomplete data.
+
 `install-autostart.bat` fixes the two ways it has actually died: the terminal
 window being closed, and the machine restarting. It installs into the per-user
 Startup folder rather than creating a scheduled task — `schtasks /sc onlogon`

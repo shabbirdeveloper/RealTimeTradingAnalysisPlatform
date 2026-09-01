@@ -271,7 +271,43 @@ if stale_minutes > 20:
 line(OK, f"data is fresh — newest candle {age(newest_overall, now)}")
 
 # ------------------------------------------------------------ 5. warm-up
-head("6. History warm-up")
+head("6. Collection gaps — did the machine sleep?")
+
+# A sleeping machine leaves no error, just missing rows. And the gap is not
+# recoverable: prices can be backfilled, but the DECISIONS the engine would
+# have made cannot, because a decision depends on what was knowable at that
+# moment. Gaps quietly remove evidence from the accuracy measurement.
+gap_asset = next((a for a in active if a["symbol"] == "BTCUSD"), active[0] if active else None)
+if gap_asset:
+    # Crypto by preference: it trades continuously, so any gap in its M5
+    # series is OUR outage. A gap in forex is usually just the weekend.
+    recent = (
+        client.table("candles").select("open_time")
+        .eq("asset_id", gap_asset["id"]).eq("timeframe", "M5")
+        .gte("open_time", (now - timedelta(days=3)).isoformat())
+        .order("open_time", ascending=True).limit(2000).execute().data or []
+    )
+    times = [parse(r["open_time"]) for r in recent]
+    gaps = [
+        (times[i - 1], times[i], (times[i] - times[i - 1]).total_seconds() / 60)
+        for i in range(1, len(times))
+        if (times[i] - times[i - 1]).total_seconds() > 20 * 60
+    ]
+
+    line(INFO, f"checked {gap_asset['symbol']} (continuous market) over the last 3 days")
+    if not times:
+        line(WARN, "no candles in the window to check")
+    elif not gaps:
+        line(OK, f"no gaps over 20 min across {len(times)} bars — collection has been continuous")
+    else:
+        lost = sum(g[2] for g in gaps)
+        line(WARN, f"{len(gaps)} gap(s), {lost / 60:.1f} hours of missing data:")
+        for start_gap, end_gap, minutes in gaps[-5:]:
+            line(INFO, f"    {start_gap:%d %b %H:%M} → {end_gap:%d %b %H:%M}  ({minutes / 60:.1f}h)")
+        line(INFO, "Most likely the machine slept or the collector was stopped. Prices can")
+        line(INFO, "be backfilled; the decisions missed in that window cannot.")
+
+head("7. History warm-up")
 if warming:
     line(WARN, f"{len(warming)} timeframe(s) below {WARMUP} bars: {', '.join(warming[:8])}")
     line(INFO, "Until a timeframe has enough history the engine reports 'insufficient")
@@ -281,7 +317,7 @@ else:
     line(OK, f"every active timeframe has {WARMUP}+ bars")
 
 # ------------------------------------------------------------- 6. decisions
-head("7. Decisions")
+head("8. Decisions")
 sig = (
     client.table("signals")
     .select("generated_at, last_evaluated_at, direction, grade, status, technical_score, "
@@ -329,7 +365,7 @@ line(INFO, "all decisions so far: " + (", ".join(f"{k}={v}" for k, v in sorted(c
 line(INFO, f"strategy version in use: {sig[0].get('strategy_version') or 'unstamped'}")
 
 # --------------------------------------------------------------- 7. failures
-head("8. Score distribution — is the threshold in the right place?")
+head("9. Score distribution — is the threshold in the right place?")
 
 # The single most informative view once decisions start flowing. A threshold
 # is only meaningful relative to the scores the engine actually produces: 78
@@ -374,7 +410,7 @@ else:
         line(INFO, "a good setup looks like. Shadow resolution (section 9) is what settles")
         line(INFO, "it: it records how the rejected setups would have turned out.")
 
-head("9. Recorded failures (last 24h)")
+head("10. Recorded failures (last 24h)")
 since = (now - timedelta(days=1)).isoformat()
 fails = (
     client.table("audit_logs")
@@ -391,7 +427,7 @@ else:
         line(BAD, f"{when}  {f['action']:<20} {f.get('target_id', '')}  {err}")
 
 # ------------------------------------------------------------ 8. resolution
-head("10. Resolution (are outcomes being scored?)")
+head("11. Resolution (are outcomes being scored?)")
 resolved = client.table("signals").select("result", count="exact").not_.is_("result", "null").execute()
 pending = (
     client.table("signals").select("expiry_at", count="exact")
