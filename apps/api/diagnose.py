@@ -14,7 +14,10 @@ credentials are reported as present/absent only.
 """
 from __future__ import annotations
 
+import json
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 OK, WARN, BAD, INFO = "  OK ", " WARN", " STOP", "     "
@@ -85,7 +88,33 @@ if not settings.has_real_provider:
     )
 
 # ------------------------------------------------------------ 2. connection
-head("2. Database connection")
+head("2. Is the collector process alive?")
+
+# The single most common failure here, and the one this script used to
+# diagnose only indirectly: the API is simply not running. Everything
+# downstream then looks like a data problem -- stale candles, frozen
+# decisions -- when the truth is that nothing is executing.
+API_URL = "http://127.0.0.1:8000/health"
+collector_alive = False
+try:
+    with urllib.request.urlopen(API_URL, timeout=3) as response:
+        body = response.read().decode("utf-8", "replace")[:200]
+    collector_alive = True
+    line(OK, f"API responding at {API_URL}")
+    try:
+        line(INFO, json.dumps(json.loads(body))[:120])
+    except ValueError:
+        line(INFO, body)
+except urllib.error.URLError as exc:
+    line(BAD, f"NOT RUNNING — nothing answered at {API_URL} ({exc.reason})")
+except Exception as exc:  # noqa: BLE001
+    line(WARN, f"could not check {API_URL}: {exc}")
+
+if not collector_alive:
+    line(INFO, "Everything below still reads the database, so it shows the state as")
+    line(INFO, "of whenever the collector last ran — not a live picture.")
+
+head("3. Database connection")
 try:
     from app.storage.supabase_client import get_service_client
 
@@ -103,7 +132,7 @@ if inactive:
     line(INFO, f"inactive (will not be polled): {', '.join(sorted(inactive))}")
 
 # ------------------------------------------------------------- 3. migrations
-head("3. Schema / migrations")
+head("4. Schema / migrations")
 
 # Each probe is a cheap read that only succeeds once its migration has run.
 # Probing per-migration rather than per-column matters: migrations can be
@@ -192,7 +221,7 @@ if optional:
     line(INFO, "signals would be missing. Continuing the check.")
 
 # ---------------------------------------------------------------- 4. candles
-head("4. Candles (is the collector actually running?)")
+head("5. Candles (is data actually arriving?)")
 now = datetime.now(timezone.utc)
 WARMUP = 250
 newest_overall: datetime | None = None
@@ -242,7 +271,7 @@ if stale_minutes > 20:
 line(OK, f"data is fresh — newest candle {age(newest_overall, now)}")
 
 # ------------------------------------------------------------ 5. warm-up
-head("5. History warm-up")
+head("6. History warm-up")
 if warming:
     line(WARN, f"{len(warming)} timeframe(s) below {WARMUP} bars: {', '.join(warming[:8])}")
     line(INFO, "Until a timeframe has enough history the engine reports 'insufficient")
@@ -252,7 +281,7 @@ else:
     line(OK, f"every active timeframe has {WARMUP}+ bars")
 
 # ------------------------------------------------------------- 6. decisions
-head("6. Decisions")
+head("7. Decisions")
 sig = (
     client.table("signals")
     .select("generated_at, last_evaluated_at, direction, grade, status, technical_score, "
@@ -300,7 +329,7 @@ line(INFO, "all decisions so far: " + (", ".join(f"{k}={v}" for k, v in sorted(c
 line(INFO, f"strategy version in use: {sig[0].get('strategy_version') or 'unstamped'}")
 
 # --------------------------------------------------------------- 7. failures
-head("7. Recorded failures (last 24h)")
+head("8. Recorded failures (last 24h)")
 since = (now - timedelta(days=1)).isoformat()
 fails = (
     client.table("audit_logs")
@@ -317,7 +346,7 @@ else:
         line(BAD, f"{when}  {f['action']:<20} {f.get('target_id', '')}  {err}")
 
 # ------------------------------------------------------------ 8. resolution
-head("8. Resolution (are outcomes being scored?)")
+head("9. Resolution (are outcomes being scored?)")
 resolved = client.table("signals").select("result", count="exact").not_.is_("result", "null").execute()
 pending = (
     client.table("signals").select("expiry_at", count="exact")
@@ -334,7 +363,16 @@ else:
 # ----------------------------------------------------------------- verdict
 print()
 print("=" * 68)
-if not ready:
+if not collector_alive:
+    print("VERDICT: the collector is NOT RUNNING. Nothing above is live.")
+    print()
+    print("         Start it in its OWN terminal window and leave that window open:")
+    print("             .venv\\Scripts\\python.exe -m uvicorn app.main:app")
+    print()
+    print("         Run this script, backfill.py and anything else from a SECOND")
+    print("         window. Closing the window the API runs in stops the collector,")
+    print("         and then candles stop arriving and decisions freeze.")
+elif not ready:
     print("VERDICT: collecting data, not yet analysing. Warm-up in progress.")
 elif counts.get("CALL", 0) + counts.get("PUT", 0) == 0:
     print("VERDICT: the engine is running and evaluating, but has not yet found a")
