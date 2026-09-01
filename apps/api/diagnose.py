@@ -127,50 +127,69 @@ def has_function(name: str) -> bool:
         return "does not exist" not in str(exc).lower()
 
 
+# Not every migration blocks signal generation, and treating them as if they
+# do sends you off fixing something unrelated while the real problem sits
+# untouched. `blocks` marks the ones whose absence actually breaks the signal
+# write path; the rest degrade a separate feature and are reported as gaps.
 PROBES = [
+    # name, probe, blocks_signals
     ("20260830000011_seed_crypto_assets",
-     lambda: any(a["symbol"] == "BTCUSD" for a in assets)),
+     lambda: any(a["symbol"] == "BTCUSD" for a in assets), True),
     ("20260830000012_notification_prefs_crypto",
-     lambda: has_column("notification_preferences", "btcusd_enabled")),
+     lambda: has_column("notification_preferences", "btcusd_enabled"), False),
     ("20260830000013_admin_list_users",
-     lambda: has_function("admin_list_users")),
+     lambda: has_function("admin_list_users"), False),
     ("20260830000014_dedup_and_shadow_resolution",
-     lambda: has_column("signals", "last_evaluated_at") and has_column("signals", "shadow_result")),
+     lambda: has_column("signals", "last_evaluated_at") and has_column("signals", "shadow_result"), True),
     ("20260830000015_strategy_configs",
-     lambda: has_column("strategy_configs", "min_technical_score")),
+     lambda: has_column("strategy_configs", "min_technical_score"), True),
     ("20260830000016_otc_instruments_and_provenance",
-     lambda: has_column("signals", "data_source") and has_column("assets", "market_type")),
+     lambda: has_column("signals", "data_source") and has_column("assets", "market_type"), True),
     ("20260830000017_expiry_seconds",
-     lambda: has_column("strategy_configs", "expiry_seconds")),
+     lambda: has_column("strategy_configs", "expiry_seconds"), True),
 ]
 
-pending: list[str] = []
-for name, probe in PROBES:
+FEATURE_LOST = {
+    "20260830000012_notification_prefs_crypto":
+        "crypto + B-grade notification toggles (signals are unaffected)",
+    "20260830000013_admin_list_users":
+        "/admin/users cannot show emails (signals are unaffected)",
+}
+
+blocking: list[str] = []
+optional: list[str] = []
+for name, probe, blocks in PROBES:
     try:
         applied = probe()
     except Exception:  # noqa: BLE001
         applied = False
-    line(OK if applied else BAD, f"{name}  {'applied' if applied else 'NOT APPLIED'}")
-    if not applied:
-        pending.append(name)
+    if applied:
+        line(OK, f"{name}  applied")
+    elif blocks:
+        line(BAD, f"{name}  NOT APPLIED — blocks signal writes")
+        blocking.append(name)
+    else:
+        line(WARN, f"{name}  not applied — {FEATURE_LOST.get(name, 'optional')}")
+        optional.append(name)
 
-# 10 adds a constraint, which PostgREST cannot see. Named as unverifiable
-# rather than assumed either way -- it is safe to re-run regardless.
 line(INFO, "20260830000010_economic_events_unique  (constraint — cannot verify from here; safe to re-run)")
 
-if pending:
-    numbered = "\n".join(f"    {i}. {name}.sql" for i, name in enumerate(pending, 1))
+if blocking:
+    numbered = "\n".join(f"    {i}. {name}.sql" for i, name in enumerate(blocking, 1))
     halt(
-        f"{len(pending)} migration(s) not applied",
+        f"{len(blocking)} migration(s) needed by the signal path are not applied",
         "Every signal write fails on a missing column, which looks exactly like\n"
         "'no signals'. Run these files from supabase/migrations/, IN THIS ORDER,\n"
-        "in the Supabase SQL editor:\n\n"
+        "in the Supabase SQL editor, each as a SEPARATE query:\n\n"
         f"{numbered}\n\n"
-        "Run each file as a SEPARATE query — paste one, run it, then the next.\n"
-        "(A migration already applied is safe to re-run; they are written to be\n"
-        "idempotent. Order still matters: later files depend on earlier tables.)\n\n"
+        "(Already-applied migrations are safe to re-run. Order still matters:\n"
+        "later files depend on tables earlier ones create.)\n\n"
         "Then restart the API.",
     )
+
+if optional:
+    line(INFO, f"{len(optional)} optional migration(s) pending — worth running, but not why")
+    line(INFO, "signals would be missing. Continuing the check.")
 
 # ---------------------------------------------------------------- 4. candles
 head("4. Candles (is the collector actually running?)")
