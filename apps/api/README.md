@@ -136,6 +136,25 @@ table — a provider's H4 uses its own bucket conventions, which need not match
 ours, and the mismatch would surface later as a backtest that quietly
 disagrees with live.
 
+## "Why is it always NO TRADE?"
+
+```bash
+sweep.bat                    # replay 14 days, decision every 15 minutes
+sweep.bat --days 7 --step 5  # shorter window, finer grain
+```
+
+Replays real stored history with no look-ahead and reports, for each candidate
+threshold, how many setups it would have taken and what share of them won —
+with a 95% confidence interval on each win rate.
+
+Watching the live dashboard cannot distinguish "the market offers nothing right
+now" from "these rules would reject almost anything", because both show the
+same NO TRADE card. Replaying weeks of stored history can, in minutes.
+
+Read it by the LOWER interval bound against break-even (55.6% at an 80%
+payout), never by the win rate alone. A 75% win rate on 8 trades has a 95%
+interval of 41–93%, which is not evidence of anything.
+
 ## Checking whether signals are working
 
 ```bash
