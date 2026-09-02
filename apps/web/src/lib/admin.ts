@@ -521,3 +521,186 @@ export async function getStrategyReport(): Promise<StrategyReport> {
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Admin overview (spec section 29)
+// ---------------------------------------------------------------------------
+
+export interface AdminOverview {
+  /** null where the platform genuinely cannot know the number yet, so the
+   *  page can say so instead of printing a confident zero. The two are very
+   *  different: 0 signals today is a fact, "we don't track logins" is not. */
+  totalUsers: number | null;
+  subscribers: number | null;
+  usersError: string | null;
+  signalsToday: number;
+  aPlusPlusToday: number;
+  rejectedToday: number;
+  decisionsToday: number;
+  resolvedTotal: number;
+  wins: number;
+  losses: number;
+  /** null until anything has resolved -- an accuracy of 0% and no data yet
+   *  look identical once rendered, and only one of them is true. */
+  accuracy: number | null;
+  components: SystemHealthRow[];
+  /** Newest candle across all assets; the honest test of "is the feed alive". */
+  newestCandleAt: string | null;
+}
+
+export async function getAdminOverview(): Promise<AdminOverview> {
+  const empty: AdminOverview = {
+    totalUsers: null, subscribers: null, usersError: null,
+    signalsToday: 0, aPlusPlusToday: 0, rejectedToday: 0, decisionsToday: 0,
+    resolvedTotal: 0, wins: 0, losses: 0, accuracy: null,
+    components: [], newestCandleAt: null,
+  };
+
+  try {
+    const supabase = await createClient();
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const [usersResult, health, todayRes, resolvedRes, candleRes] = await Promise.all([
+      getAdminUsers(),
+      getSystemHealth(),
+      supabase
+        .from("signals")
+        .select("direction, grade, status")
+        .gte("generated_at", startOfDay.toISOString()),
+      supabase
+        .from("signals")
+        .select("result")
+        .in("status", ["WON", "LOST", "DRAW"])
+        .limit(5000),
+      supabase
+        .from("candles")
+        .select("open_time")
+        .order("open_time", { ascending: false })
+        .limit(1),
+    ]);
+
+    const today = (todayRes.data ?? []) as Array<{ direction: string; grade: string; status: string }>;
+    const signalsToday = today.filter(
+      (r) => r.status !== "REJECTED" && (r.direction === "CALL" || r.direction === "PUT")
+    ).length;
+
+    const resolved = (resolvedRes.data ?? []) as Array<{ result: string | null }>;
+    const wins = resolved.filter((r) => r.result === "WON").length;
+    const losses = resolved.filter((r) => r.result === "LOST").length;
+    const decided = wins + losses;
+
+    return {
+      totalUsers: usersResult.ok ? usersResult.users.length : null,
+      subscribers: usersResult.ok
+        ? usersResult.users.filter((u: AdminUserRow) => u.subscriptionStatus === "active").length
+        : null,
+      usersError: usersResult.ok ? null : usersResult.error,
+      signalsToday,
+      aPlusPlusToday: today.filter((r) => r.grade === "A++" && r.status !== "REJECTED").length,
+      rejectedToday: today.filter((r) => r.status === "REJECTED").length,
+      decisionsToday: today.length,
+      resolvedTotal: decided,
+      wins,
+      losses,
+      accuracy: decided > 0 ? Math.round((wins / decided) * 1000) / 10 : null,
+      components: health,
+      newestCandleAt:
+        ((candleRes.data ?? []) as Array<{ open_time: string }>)[0]?.open_time ?? null,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Models (spec sections 11/12/31)
+// ---------------------------------------------------------------------------
+
+export interface ModelVersionRow {
+  id: string;
+  modelId: string;
+  name: string;
+  asset: AssetSymbol | null;
+  expiryMinutes: number | null;
+  modelType: string;
+  version: string;
+  status: string;
+  trainedAt: string | null;
+  activatedAt: string | null;
+  trainingPeriodStart: string | null;
+  trainingPeriodEnd: string | null;
+  testAccuracy: number | null;
+  aPlusPlusAccuracy: number | null;
+  signalCoverage: number | null;
+  artifactUri: string | null;
+}
+
+export type ModelsResult =
+  | { ok: true; models: ModelVersionRow[] }
+  | { ok: false; error: string };
+
+/**
+ * Trained models, read from `models` / `model_versions`.
+ *
+ * Expected to come back EMPTY today: the ML pipeline (Phase 6) is not
+ * built, so nothing has been trained. The spec is explicit that the
+ * honest answer there is MODEL_NOT_READY, never a generated accuracy --
+ * a fabricated "91.2% A++" on this page is exactly the number someone
+ * would later cite as evidence the platform works.
+ */
+export async function getModels(): Promise<ModelsResult> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("model_versions")
+      .select(
+        "id, model_id, version, status, trained_at, activated_at, training_period_start, " +
+          "training_period_end, test_accuracy, aplusplus_accuracy, signal_coverage, artifact_uri, " +
+          "models(name, model_type, expiry_minutes, assets(symbol))"
+      )
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (error) return { ok: false, error: error.message };
+
+    const rows = (data ?? []) as unknown as Array<{
+      id: string; model_id: string; version: string; status: string;
+      trained_at: string | null; activated_at: string | null;
+      training_period_start: string | null; training_period_end: string | null;
+      test_accuracy: number | null; aplusplus_accuracy: number | null;
+      signal_coverage: number | null; artifact_uri: string | null;
+      models: {
+        name: string; model_type: string; expiry_minutes: number | null;
+        assets: { symbol: AssetSymbol } | { symbol: AssetSymbol }[] | null;
+      } | null;
+    }>;
+
+    return {
+      ok: true,
+      models: rows.map((r) => {
+        const assetRow = Array.isArray(r.models?.assets) ? r.models?.assets[0] : r.models?.assets;
+        return {
+          id: r.id,
+          modelId: r.model_id,
+          name: r.models?.name ?? "(unnamed model)",
+          asset: assetRow?.symbol ?? null,
+          expiryMinutes: r.models?.expiry_minutes ?? null,
+          modelType: r.models?.model_type ?? "unknown",
+          version: r.version,
+          status: r.status,
+          trainedAt: r.trained_at,
+          activatedAt: r.activated_at,
+          trainingPeriodStart: r.training_period_start,
+          trainingPeriodEnd: r.training_period_end,
+          testAccuracy: r.test_accuracy,
+          aPlusPlusAccuracy: r.aplusplus_accuracy,
+          signalCoverage: r.signal_coverage,
+          artifactUri: r.artifact_uri,
+        };
+      }),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Could not load models." };
+  }
+}
