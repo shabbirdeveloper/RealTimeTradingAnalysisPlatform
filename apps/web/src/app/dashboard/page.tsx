@@ -8,6 +8,7 @@ import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
 import { getLatestSignals, getLastEvaluationTimes } from "@/lib/signals";
 import { OtcWarning } from "@/components/shared/otc-warning";
+import { cn } from "@/lib/utils";
 import type { AssetSymbol, Signal } from "@/types";
 import { Award, TrendingUp, Target, AlertTriangle } from "lucide-react";
 
@@ -219,21 +220,32 @@ function StatTile({
 }) {
   return (
     <Card
-      className="card-premium-hover animate-in fade-in-0 slide-in-from-bottom-3 duration-500 ease-out"
-      style={{ animationDelay: `${index * 90}ms` }}
+      className="card-premium-hover rise-in overflow-hidden"
+      style={{ animationDelay: `${index * 70}ms` }}
     >
-      <CardContent className="flex items-center gap-3.5 p-4">
+      {/* A hairline of the tile's own colour along the top edge. It gives the
+          row a rhythm at a glance without spending a border, a fill and a
+          shadow on every block — which is what flattens a dashboard. */}
+      <div className={cn("h-[2px] w-full", accent ? "bg-aplusplus/70" : "bg-primary/50")} />
+      <CardContent className="flex items-start gap-3.5 p-4">
         <span
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${
-            accent ? "bg-gradient-to-br from-aplusplus/25 to-aplusplus/5 text-aplusplus ring-aplusplus/25" : "bg-gradient-to-br from-primary/20 to-primary/5 text-primary ring-primary/20"
-          }`}
+          className={cn(
+            "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset",
+            accent
+              ? "bg-aplusplus/10 text-aplusplus ring-aplusplus/25"
+              : "bg-primary/10 text-primary ring-primary/20"
+          )}
         >
-          <Icon className="h-4.5 w-4.5" />
+          <Icon className="h-4 w-4" />
         </span>
-        <div>
-          <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-          <p className="font-mono-tabular text-lg font-semibold text-foreground">{value}</p>
-          <p className="text-[11px] text-muted-foreground">{sub}</p>
+        <div className="min-w-0">
+          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            {label}
+          </p>
+          <p className="mt-1 font-mono-tabular text-[22px] font-semibold leading-none tracking-[-0.02em] text-foreground">
+            {value}
+          </p>
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{sub}</p>
         </div>
       </CardContent>
     </Card>

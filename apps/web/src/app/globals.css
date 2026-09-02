@@ -180,6 +180,31 @@
     animation: ping-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
 
+  /* Price flash on tick. A trading terminal convention, and the reason it
+     is worth having: it marks WHICH WAY the last change went, which a
+     re-rendered number cannot show on its own. Fast and low-contrast --
+     the point is peripheral awareness, not attention-grabbing. */
+  .tick-up {
+    animation: tick-flash-up 700ms ease-out;
+  }
+  .tick-down {
+    animation: tick-flash-down 700ms ease-out;
+  }
+
+  /* Diverging CALL/PUT meter. One axis, both sides growing outward from
+     centre, so the GAP between them is the thing you read -- which is
+     exactly what the separation gate decides on. Two parallel bars made
+     the reader do that subtraction themselves. */
+  .meter-fill {
+    animation: meter-grow 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: var(--meter-origin, left);
+  }
+
+  /* Entrance for grid items, staggered by index at the call site. */
+  .rise-in {
+    animation: rise-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .hero-float {
     animation: float-subtle 7s ease-in-out infinite;
   }
@@ -208,6 +233,26 @@
   75%, 100% { transform: scale(2.1); opacity: 0; }
 }
 
+@keyframes tick-flash-up {
+  0% { color: hsl(var(--call)); }
+  100% { color: inherit; }
+}
+
+@keyframes tick-flash-down {
+  0% { color: hsl(var(--put)); }
+  100% { color: inherit; }
+}
+
+@keyframes meter-grow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
 @keyframes float-subtle {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-6px); }
@@ -218,8 +263,17 @@
   .skeleton-shimmer::after,
   .live-dot-ring,
   .hero-float,
+  .tick-up,
+  .tick-down,
+  .meter-fill,
+  .rise-in,
   .animate-in {
     animation: none !important;
+  }
+  /* The meter must still be VISIBLE without its growth animation --
+     `both` would otherwise leave it stuck at scaleX(0). */
+  .meter-fill {
+    transform: none !important;
   }
   .card-premium-hover {
     transition: none !important;

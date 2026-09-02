@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DirectionBadge, GradeBadge, RegimeBadge, DataStatusPill } from "@/components/shared/badges";
 import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/shared/animated-number";
+import { PriceTicker } from "@/components/shared/price-ticker";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { DataStatus, Signal } from "@/types";
 import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
@@ -41,7 +42,7 @@ export function AssetSignalCard({
     signal.direction === "CALL" ? "bg-call" : signal.direction === "PUT" ? "bg-put" : "bg-notrade/70";
 
   return (
-    <Link href={`/dashboard/markets/${signal.asset.toLowerCase()}`} className="block animate-in fade-in-0 slide-in-from-bottom-4 duration-500 ease-out" style={{ animationDelay: `${index * 90}ms` }}>
+    <Link href={`/dashboard/markets/${signal.asset.toLowerCase()}`} className="rise-in block" style={{ animationDelay: `${index * 70}ms` }}>
       <Card
         className={cn(
           "card-premium-hover h-full overflow-hidden",
@@ -65,9 +66,11 @@ export function AssetSignalCard({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-baseline justify-between">
-            <span className="font-mono-tabular text-[26px] font-semibold leading-none tracking-tight text-foreground">
-              {formatPrice(price, cfg.pipDecimal)}
-            </span>
+            <PriceTicker
+              value={price}
+              decimals={cfg.pipDecimal}
+              className="text-[27px] font-semibold leading-none tracking-[-0.02em] text-foreground"
+            />
             <span
               className={cn(
                 "flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-mono-tabular text-xs font-semibold",

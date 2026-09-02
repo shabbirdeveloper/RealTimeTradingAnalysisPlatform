@@ -1,6 +1,7 @@
 "use client";
 import type { Signal, TimeframeBias } from "@/types";
 import { cn, formatRelative, isCheckStale } from "@/lib/utils";
+import { SideMeter } from "@/components/dashboard/side-meter";
 
 const ORDER = ["H4", "H1", "M15", "M5"] as const;
 
@@ -46,8 +47,11 @@ export function MarketRead({
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center gap-1">
-        {ORDER.map((tf) => {
+      {/* The ladder reads slowest-to-fastest, left to right, so a
+          disagreement between macro context and entry timing is a shape
+          rather than something to work out from four words. */}
+      <div className="flex overflow-hidden rounded-md border border-border/80">
+        {ORDER.map((tf, i) => {
           const read = byTimeframe.get(tf);
           const bias = read?.bias ?? "NEUTRAL";
           return (
@@ -55,19 +59,22 @@ export function MarketRead({
               key={tf}
               title={read?.notes?.[0] ?? "No reading yet"}
               className={cn(
-                "flex-1 rounded-md border px-1.5 py-1 text-center",
-                bias === "BULLISH" && "border-call/30 bg-call-muted",
-                bias === "BEARISH" && "border-put/30 bg-put-muted",
-                bias === "NEUTRAL" && "border-border bg-secondary/40"
+                "flex-1 px-1.5 py-1.5 text-center transition-colors",
+                i > 0 && "border-l border-border/80",
+                bias === "BULLISH" && "bg-call-muted/70",
+                bias === "BEARISH" && "bg-put-muted/70",
+                bias === "NEUTRAL" && "bg-secondary/30"
               )}
             >
-              <p className="text-[9.5px] font-medium uppercase tracking-wider text-muted-foreground">{tf}</p>
+              <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                {tf}
+              </p>
               <p
                 className={cn(
-                  "text-[11px] font-semibold leading-tight",
+                  "mt-0.5 text-[11px] font-semibold leading-none",
                   bias === "BULLISH" && "text-call",
                   bias === "BEARISH" && "text-put",
-                  bias === "NEUTRAL" && "text-muted-foreground"
+                  bias === "NEUTRAL" && "text-muted-foreground/70"
                 )}
               >
                 {bias === "BULLISH" ? "Up" : bias === "BEARISH" ? "Down" : "Flat"}
@@ -77,15 +84,8 @@ export function MarketRead({
         })}
       </div>
 
-      {/* CALL against PUT, scored from the same evidence and neither derived
-          from the other. The bars deliberately do not fill the row: the space
-          left over is evidence nobody committed, which is a different state
-          from the two sides being balanced. */}
       {signal.callScore != null && signal.putScore != null && (
-        <div className="space-y-1">
-          <SideBar label="Call" value={signal.callScore} tone="call" />
-          <SideBar label="Put" value={signal.putScore} tone="put" />
-        </div>
+        <SideMeter call={signal.callScore} put={signal.putScore} />
       )}
 
       {pct !== null && (
@@ -106,9 +106,7 @@ export function MarketRead({
       )}
 
       <p className="text-[10.5px] text-muted-foreground">
-        {signal.callScore != null && signal.putScore != null
-          ? `${Math.abs(signal.callScore - signal.putScore)} apart · ${agreement}`
-          : agreement}
+        {agreement}
         {" · "}
         <span className={cn(stale && "text-destructive")}>
           {stale ? "last checked " : "checked "}
@@ -120,30 +118,6 @@ export function MarketRead({
           </span>
         )}
       </p>
-    </div>
-  );
-}
-
-function SideBar({ label, value, tone }: { label: string; value: number; tone: "call" | "put" }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-7 shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-        <div
-          className={cn("h-full rounded-full transition-all duration-500", tone === "call" ? "bg-call" : "bg-put")}
-          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-        />
-      </div>
-      <span
-        className={cn(
-          "w-6 shrink-0 text-right font-mono-tabular text-[11px] font-semibold",
-          tone === "call" ? "text-call" : "text-put"
-        )}
-      >
-        {value}
-      </span>
     </div>
   );
 }
