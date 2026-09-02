@@ -6,7 +6,7 @@ import { getRealPerformanceSummary } from "@/lib/performance";
 import { breakEvenWinRate, wilsonInterval } from "@/lib/statistics";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
-import { getLatestSignals } from "@/lib/signals";
+import { getLatestSignals, getLastEvaluationTimes } from "@/lib/signals";
 import { OtcWarning } from "@/components/shared/otc-warning";
 import type { AssetSymbol, Signal } from "@/types";
 import { Award, TrendingUp, Target, AlertTriangle } from "lucide-react";
@@ -52,9 +52,10 @@ export default async function DashboardHomePage() {
     : verdict === "Losing" ? "text-put"
     : "text-muted-foreground";
 
-  const [priceData, signals] = await Promise.all([
+  const [priceData, signals, evaluatedAt] = await Promise.all([
     getAssetPriceSnapshotsWithReason(),
     getLatestSignals(),
+    getLastEvaluationTimes(),
   ]);
   const { snapshots, failure: dataFailure } = priceData;
 
@@ -151,6 +152,7 @@ export default async function DashboardHomePage() {
               signal={signal}
               price={snapshot.price}
               change24hPct={snapshot.change24hPct}
+              lastEvaluatedAt={evaluatedAt[asset] ?? null}
               index={i}
               regimeAvailable={Boolean(realSignal)}
               dataStatus={snapshot.dataStatus}

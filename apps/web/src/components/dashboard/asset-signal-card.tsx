@@ -17,6 +17,7 @@ export function AssetSignalCard({
   index = 0,
   regimeAvailable = true,
   dataStatus,
+  lastEvaluatedAt,
 }: {
   signal: Signal;
   price: number;
@@ -29,6 +30,8 @@ export function AssetSignalCard({
   /** Freshness of the underlying price data, per spec section 42. Only
    * rendered when provided -- demo-data callers can omit it. */
   dataStatus?: DataStatus;
+  /** Newest decision of any status — see getLastEvaluationTimes(). */
+  lastEvaluatedAt?: string | null;
 }) {
   const cfg = ASSET_CONFIGS[signal.asset];
   const isNoTrade = signal.direction === "NO_TRADE";
@@ -85,7 +88,7 @@ export function AssetSignalCard({
               {/* Without this the card is a static word. The engine's read
                   moves every cycle even when the answer stays no, and
                   hiding that makes a working system look frozen. */}
-              <MarketRead signal={signal} />
+              <MarketRead signal={signal} lastEvaluatedAt={lastEvaluatedAt} />
             </div>
           ) : (
             <div className="space-y-3 border-t border-border/70 pt-3.5">

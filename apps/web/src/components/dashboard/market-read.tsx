@@ -19,15 +19,30 @@ const ORDER = ["H4", "H1", "M15", "M5"] as const;
  * quality bar. Nothing invented -- these are the same values the decision
  * was made from.
  */
-export function MarketRead({ signal }: { signal: Signal }) {
+export function MarketRead({
+  signal,
+  lastEvaluatedAt,
+}: {
+  signal: Signal;
+  /** From latest_evaluation_times(): the newest decision of ANY status.
+   *  May be far newer than this signal, because REJECTED decisions are
+   *  hidden from non-admins. */
+  lastEvaluatedAt?: string | null;
+}) {
   const byTimeframe = new Map<string, TimeframeBias>(
     (signal.timeframes ?? []).map((t) => [t.timeframe, t])
   );
   const agreement = agreementFor(signal.timeframes ?? []);
   const bar = requiredScore(signal);
   const pct = bar ? Math.min(100, Math.round((signal.technicalScore / bar) * 100)) : null;
-  const lastChecked = signal.lastEvaluatedAt ?? signal.generatedAt;
+  const shownAt = signal.lastEvaluatedAt ?? signal.generatedAt;
+  // Prefer the engine's real last look. When the newest decision is one the
+  // reader may not see, `shownAt` lags it and the card would otherwise
+  // accuse a healthy engine of having stopped.
+  const lastChecked =
+    lastEvaluatedAt && new Date(lastEvaluatedAt) > new Date(shownAt) ? lastEvaluatedAt : shownAt;
   const stale = isCheckStale(lastChecked);
+  const hiddenNewer = Boolean(lastEvaluatedAt && new Date(lastEvaluatedAt) > new Date(shownAt));
 
   return (
     <div className="space-y-2.5">
@@ -99,6 +114,11 @@ export function MarketRead({ signal }: { signal: Signal }) {
           {stale ? "last checked " : "checked "}
           {formatRelative(lastChecked)}
         </span>
+        {hiddenNewer && (
+          <span className="text-muted-foreground">
+            {" · current read is a rejected setup"}
+          </span>
+        )}
       </p>
     </div>
   );

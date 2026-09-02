@@ -185,3 +185,27 @@ function shapeSignal(asset: AssetSymbol, row: SignalRow): Signal {
     candidates,
   };
 }
+
+/**
+ * When each asset was last evaluated, whatever the outcome.
+ *
+ * Needed because REJECTED decisions are hidden from non-admins, so the
+ * newest row a user can SEE may be much older than the newest row that
+ * exists. Without this the dashboard reports a working engine as a
+ * stopped one — see migration 22.
+ */
+export async function getLastEvaluationTimes(): Promise<Record<string, string>> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("latest_evaluation_times");
+    if (error || !data) return {};
+    return Object.fromEntries(
+      (data as Array<{ symbol: string; last_evaluated_at: string }>).map((r) => [
+        r.symbol,
+        r.last_evaluated_at,
+      ])
+    );
+  } catch {
+    return {};
+  }
+}
