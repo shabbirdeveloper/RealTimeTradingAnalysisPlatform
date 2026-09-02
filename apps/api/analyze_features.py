@@ -37,7 +37,7 @@ is shown per bucket. A feature with signal shows a MONOTONIC spread -- up
 rate rising or falling steadily across buckets. A feature that is noise
 shows five numbers scattered around 50%.
 
-With ~15 features x 5 buckets, roughly one apparent winner WILL appear by
+With this many features x 5 buckets, several apparent winners WILL appear by
 chance alone. So the summary ranks by spread and says plainly that any hit
 needs confirming on data it was not found in. Finding a pattern here is a
 hypothesis, not a result.
@@ -55,6 +55,8 @@ from datetime import datetime, timedelta, timezone
 from app.backtesting import replay
 from app.backtesting.repository import load_history
 from app.features import indicators as ind
+from app.features import levels
+from app.features import price_action as pa
 from app.features import structure as struct
 from app.schemas.candle import Asset
 
@@ -116,6 +118,49 @@ def features_at(sliced: dict[str, list[dict]], now: datetime) -> dict[str, float
         high, low = float(last["high"]), float(last["low"])
         if high > low:
             out[f"{tf}_candle_close_position"] = (price - low) / (high - low) * 100
+
+        # --- added for spec sections 8, 10, 13, 14, 15 -------------------
+        # These are here to be TESTED, not because they are assumed to
+        # work. Candlestick patterns and oscillators are among the most
+        # watched and least evidenced signals in trading; the point of this
+        # tool is to find out whether any of them predict anything on this
+        # data, and they cannot be found innocent or guilty without being
+        # measured.
+        adx = ind.adx_latest(candles, 14)
+        if adx is not None:
+            out[f"{tf}_adx"] = adx.adx
+            # Signed trend direction, so the bucketing can separate a strong
+            # uptrend from a strong downtrend rather than lumping both into
+            # "strongly trending".
+            out[f"{tf}_di_spread"] = adx.plus_di - adx.minus_di
+
+        stoch = ind.stoch_rsi_latest(closes, 14, 14)
+        if stoch is not None:
+            out[f"{tf}_stoch_rsi"] = stoch
+
+        roc = ind.rate_of_change(closes, 10)
+        if roc is not None:
+            out[f"{tf}_roc_10"] = roc
+
+        accel = ind.momentum_acceleration(closes, 5)
+        if accel is not None:
+            out[f"{tf}_acceleration"] = accel
+
+        seq = pa.sequence(candles, 5)
+        if seq is not None:
+            out[f"{tf}_persistence_5"] = seq.directional_persistence
+            out[f"{tf}_wick_pressure_5"] = seq.wick_pressure
+            out[f"{tf}_avg_body_5"] = seq.average_body_ratio
+
+        zones = levels.find_zones(candles)
+        support = next((z for z in zones if z.kind == "SUPPORT"), None)
+        resistance = next((z for z in zones if z.kind == "RESISTANCE"), None)
+        if support is not None:
+            out[f"{tf}_support_distance_atr"] = support.distance_atr
+            out[f"{tf}_support_strength"] = float(support.strength)
+        if resistance is not None:
+            out[f"{tf}_resistance_distance_atr"] = resistance.distance_atr
+            out[f"{tf}_resistance_strength"] = float(resistance.strength)
 
     out["hour_utc"] = float(now.hour)
     return out
@@ -215,9 +260,12 @@ def main() -> None:
     print("or falling steadily across buckets — with intervals that do not all overlap.")
     print("Noise shows five numbers scattered around 50%.")
     print()
-    print(f"With {len(results)} features x {BUCKETS} buckets, roughly one apparent winner")
-    print("WILL appear by chance. Anything found here is a hypothesis, not a result:")
-    print("confirm it on a date range it was not found in before believing it.")
+    expected_false = len(results) * 0.05
+    print(f"With {len(results)} features x {BUCKETS} buckets, about {expected_false:.0f} of them")
+    print("will look significant BY CHANCE ALONE at the usual 5% level. That number grew")
+    print("when the feature set grew, which is the cost of testing more things at once.")
+    print("Anything found here is a hypothesis, not a result: confirm it on a date range")
+    print("it was not found in before believing it.")
     print()
     print("If nothing is monotonic with a spread above ~4 points, that is the answer:")
     print("these features do not predict short-horizon direction, and no amount of")

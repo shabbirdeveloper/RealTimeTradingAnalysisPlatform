@@ -218,3 +218,188 @@ def bollinger_latest(values: list[float], period: int = 20, num_std: float = 2.0
     lower = mid - num_std * std
     width_pct = ((upper - lower) / mid * 100) if mid else 0.0
     return BollingerResult(mid=mid, upper=upper, lower=lower, width_pct=width_pct)
+
+
+# ---------------------------------------------------------------------------
+# Trend strength, oscillator normalisation, rate of change (spec sections 8/10)
+# ---------------------------------------------------------------------------
+
+
+def _wilder_smooth(values: list[float], period: int) -> list[float | None]:
+    """Wilder's smoothing, as ADX is actually defined.
+
+    Not an EMA with a fiddled multiplier: Wilder seeds with a plain SUM of
+    the first `period` values and then carries `prev - prev/period + new`.
+    Substituting a standard EMA is the common shortcut and it produces
+    visibly different ADX values, which then disagree with every chart the
+    user compares against.
+    """
+    n = len(values)
+    out: list[float | None] = [None] * n
+    if n < period:
+        return out
+    total = sum(values[:period])
+    out[period - 1] = total
+    for i in range(period, n):
+        total = total - (total / period) + values[i]
+        out[i] = total
+    return out
+
+
+@dataclass(frozen=True)
+class AdxResult:
+    adx: float
+    plus_di: float
+    minus_di: float
+
+    @property
+    def trending(self) -> bool:
+        """The conventional reading. 25 is a convention, not a law -- it is
+        named here so the number appears once rather than scattered."""
+        return self.adx >= 25.0
+
+
+ADX_TRENDING_THRESHOLD = 25.0
+
+
+def adx_latest(candles: list[dict], period: int = 14) -> AdxResult | None:
+    """Average Directional Index with its two directional components.
+
+    ADX measures how strongly price is trending WITHOUT saying which way --
+    +DI and -DI carry the direction. That separation is the whole reason to
+    have it: the regime engine needs "is this a trend at all", which is a
+    different question from "up or down", and conflating them is how a
+    strong downtrend gets classified as a weak uptrend.
+
+    Needs 2 * period + 1 candles: `period` to seed Wilder's smoothing of DM
+    and TR, then another `period` to average DX into ADX.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    if len(candles) < 2 * period + 1:
+        return None
+
+    plus_dm: list[float] = []
+    minus_dm: list[float] = []
+    tr: list[float] = []
+
+    for prev, cur in zip(candles, candles[1:]):
+        high, low = float(cur["high"]), float(cur["low"])
+        prev_high, prev_low, prev_close = (
+            float(prev["high"]), float(prev["low"]), float(prev["close"]),
+        )
+        up_move = high - prev_high
+        down_move = prev_low - low
+        # Only the LARGER move counts, and only if positive. Awarding both
+        # on an outside bar double-counts a single candle's expansion.
+        plus_dm.append(up_move if (up_move > down_move and up_move > 0) else 0.0)
+        minus_dm.append(down_move if (down_move > up_move and down_move > 0) else 0.0)
+        tr.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+
+    sm_plus = _wilder_smooth(plus_dm, period)
+    sm_minus = _wilder_smooth(minus_dm, period)
+    sm_tr = _wilder_smooth(tr, period)
+
+    dx: list[float] = []
+    for p, m, t in zip(sm_plus, sm_minus, sm_tr):
+        if p is None or m is None or t is None or t == 0:
+            continue
+        plus_di = 100 * p / t
+        minus_di = 100 * m / t
+        denom = plus_di + minus_di
+        dx.append(0.0 if denom == 0 else 100 * abs(plus_di - minus_di) / denom)
+
+    if len(dx) < period:
+        return None
+
+    adx = sum(dx[:period]) / period
+    for value in dx[period:]:
+        adx = (adx * (period - 1) + value) / period
+
+    last_tr = sm_tr[-1]
+    if last_tr is None or last_tr == 0:
+        return None
+    last_plus, last_minus = sm_plus[-1], sm_minus[-1]
+    if last_plus is None or last_minus is None:
+        return None
+
+    return AdxResult(
+        adx=adx,
+        plus_di=100 * last_plus / last_tr,
+        minus_di=100 * last_minus / last_tr,
+    )
+
+
+def rsi_series(values: list[float], period: int = 14) -> list[float | None]:
+    """RSI at every point, which Stochastic RSI needs. `rsi_latest` stays as
+    the cheap path for callers that only want the last value."""
+    n = len(values)
+    out: list[float | None] = [None] * n
+    if n <= period:
+        return out
+
+    gains = 0.0
+    losses = 0.0
+    for i in range(1, period + 1):
+        change = values[i] - values[i - 1]
+        gains += max(change, 0.0)
+        losses += max(-change, 0.0)
+    avg_gain = gains / period
+    avg_loss = losses / period
+    out[period] = 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
+
+    for i in range(period + 1, n):
+        change = values[i] - values[i - 1]
+        avg_gain = (avg_gain * (period - 1) + max(change, 0.0)) / period
+        avg_loss = (avg_loss * (period - 1) + max(-change, 0.0)) / period
+        out[i] = 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
+    return out
+
+
+def stoch_rsi_latest(values: list[float], period: int = 14, lookback: int = 14) -> float | None:
+    """Where RSI sits inside its own recent range, 0-100.
+
+    RSI at 58 says almost nothing on its own. RSI at 58 when it has spent
+    the last fourteen bars between 55 and 60 is a different market from RSI
+    at 58 after ranging 30 to 70. Stochastic RSI is that normalisation.
+
+    Returns None -- not 50 -- when RSI has been perfectly flat, because a
+    zero-width range has no position within it, and 50 would read as
+    "neutral" when the truth is "undefined".
+    """
+    rsis = [r for r in rsi_series(values, period) if r is not None]
+    if len(rsis) < lookback:
+        return None
+    window = rsis[-lookback:]
+    low, high = min(window), max(window)
+    if high == low:
+        return None
+    return 100 * (window[-1] - low) / (high - low)
+
+
+def rate_of_change(values: list[float], period: int = 10) -> float | None:
+    """Percentage change over `period` bars."""
+    if period <= 0:
+        raise ValueError("period must be positive")
+    if len(values) <= period:
+        return None
+    base = values[-period - 1]
+    if base == 0:
+        return None
+    return 100 * (values[-1] - base) / base
+
+
+def momentum_acceleration(values: list[float], period: int = 5) -> float | None:
+    """Whether momentum is building or fading: the change in rate of change.
+
+    Positive means the move is speeding up, negative that it is running out
+    of energy -- which is the distinction between a trend to join and one to
+    stay out of, and neither RSI nor MACD states it directly.
+    """
+    if len(values) <= 2 * period:
+        return None
+    recent = rate_of_change(values, period)
+    earlier = rate_of_change(values[:-period], period)
+    if recent is None or earlier is None:
+        return None
+    return recent - earlier
