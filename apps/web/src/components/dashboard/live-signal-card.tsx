@@ -5,7 +5,7 @@ import { DirectionBadge, GradeBadge, RegimeBadge } from "@/components/shared/bad
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { Signal } from "@/types";
-import { cn, expirySecondsOf, formatCountdown, formatDateTimeUTC, formatExpiry, formatPrice } from "@/lib/utils";
+import { cn, expirySecondsOf, formatCountdown, formatDateTimeUTC, formatExpiry, formatPrice, formatRelative, isCheckStale } from "@/lib/utils";
 import { Clock, Sparkles } from "lucide-react";
 import { DecisionChecks } from "@/components/dashboard/decision-checks";
 
@@ -15,6 +15,10 @@ export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now
   const msRemaining = signal.validUntil ? new Date(signal.validUntil).getTime() - now.getTime() : 0;
   const isAplusplus = signal.grade === "A++";
   const accent = signal.direction === "CALL" ? "bg-call" : signal.direction === "PUT" ? "bg-put" : "bg-notrade/70";
+  // `now` is a prop (null-until-hydrated upstream), not Date.now(), so
+  // server and client render identical markup.
+  const lastChecked = signal.lastEvaluatedAt ?? signal.generatedAt;
+  const checkStale = isCheckStale(lastChecked, now.getTime());
 
   return (
     <Card
@@ -35,6 +39,16 @@ export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now
           <div>
             <p className="text-base font-semibold text-foreground">{cfg.displayName}</p>
             <p className="text-xs text-muted-foreground">Generated {formatDateTimeUTC(signal.generatedAt)}</p>
+            {/* A standing decision keeps ONE row -- `generatedAt` freezes while
+                the engine keeps running. Without this line a healthy engine
+                holding NO_TRADE for a day is indistinguishable from a dead
+                one, and the natural response to that is to distrust the
+                whole system (or to lower the quality bar until it speaks). */}
+            <p className={cn("text-xs", checkStale ? "text-destructive" : "text-muted-foreground/70")}>
+              {checkStale ? "Last checked " : "Checked "}
+              {formatRelative(lastChecked, now.getTime())}
+              {checkStale && " — engine may be stopped"}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <RegimeBadge regime={signal.marketRegime} />

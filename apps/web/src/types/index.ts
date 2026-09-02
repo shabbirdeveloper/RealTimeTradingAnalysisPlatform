@@ -107,6 +107,14 @@ export interface Signal {
   marketRegime: MarketRegime;
   checks?: DecisionCheck[];
   generatedAt: string; // ISO
+  /**
+   * When the engine last re-confirmed this decision. Dedup keeps ONE row
+   * per standing decision (a NO_TRADE that holds all day is one decision,
+   * not 144), so `generatedAt` stops moving while the engine keeps running.
+   * Showing only that made a working engine look dead. This is the field
+   * that answers "is it still alive?".
+   */
+  lastEvaluatedAt?: string | null; // ISO
   entryPrice: number | null;
   validUntil: string | null; // ISO
   expiresInMs?: number;

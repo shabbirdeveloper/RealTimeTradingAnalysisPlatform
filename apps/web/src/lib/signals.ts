@@ -47,10 +47,10 @@ export async function getLatestSignals(): Promise<Record<AssetSymbol, Signal | n
         const { data } = await supabase
           .from("signals")
           .select(
-            "id, direction, generated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
+            "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
           )
           .eq("asset_id", assetRow.id)
-          .order("generated_at", { ascending: false })
+          .order("last_evaluated_at", { ascending: false, nullsFirst: false })
           .limit(1);
 
         const row = data?.[0] as SignalRow | undefined;
@@ -84,10 +84,10 @@ export async function getLatestSignal(asset: AssetSymbol): Promise<Signal | null
     const { data } = await supabase
       .from("signals")
       .select(
-        "id, direction, generated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
+        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
       )
       .eq("asset_id", (assetRow as { id: string }).id)
-      .order("generated_at", { ascending: false })
+      .order("last_evaluated_at", { ascending: false, nullsFirst: false })
       .limit(1);
 
     const row = data?.[0] as SignalRow | undefined;
@@ -102,6 +102,7 @@ interface SignalRow {
   id: string;
   direction: Direction;
   generated_at: string;
+  last_evaluated_at?: string | null;
   entry_price: string | number | null;
   expiry_minutes: ExpiryMinutes | null;
   expiry_seconds?: number | null;
@@ -168,6 +169,7 @@ function shapeSignal(asset: AssetSymbol, row: SignalRow): Signal {
     expirySeconds: row.expiry_seconds ?? (row.expiry_minutes != null ? row.expiry_minutes * 60 : null),
     marketRegime: row.market_regime,
     generatedAt: row.generated_at,
+    lastEvaluatedAt: row.last_evaluated_at ?? null,
     entryPrice: row.entry_price !== null ? Number(row.entry_price) : null,
     validUntil: row.expiry_at,
     reasons: row.reasons ?? [],

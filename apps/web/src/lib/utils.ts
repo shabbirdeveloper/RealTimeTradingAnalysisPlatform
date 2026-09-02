@@ -80,3 +80,31 @@ export function expirySecondsOf(signal: {
   }
   return signal.expiryMinutes != null ? signal.expiryMinutes * 60 : null;
 }
+
+/**
+ * "3m ago" / "2h ago" / "1d ago". Used for the engine's last-checked
+ * stamp, where the question is "is this still alive?" and an absolute UTC
+ * timestamp forces the reader to do the subtraction themselves -- badly,
+ * across timezones, at the exact moment they are trying to decide whether
+ * their money is riding on stale analysis.
+ */
+export function formatRelative(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "unknown";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "unknown";
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 90) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/** True when the engine has not re-confirmed a decision recently. */
+export function isCheckStale(iso: string | null | undefined, now: number = Date.now(), maxMinutes = 30): boolean {
+  if (!iso) return true;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return true;
+  return now - then > maxMinutes * 60_000;
+}
