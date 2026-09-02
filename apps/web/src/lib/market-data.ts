@@ -97,11 +97,41 @@ export interface SnapshotResult {
 
 export async function getAssetPriceSnapshotsWithReason(): Promise<SnapshotResult> {
   const snapshots = await getAssetPriceSnapshots();
+  if (Object.values(snapshots).some((s) => s !== null)) {
+    return { snapshots, failure: null };
+  }
+
   let failure: SnapshotFailure = null;
   try {
     const supabase = await createClient();
-    const { error } = await supabase.from("candles").select("id").limit(1);
-    if (error) failure = { reason: error.message };
+
+    // Order matters. A row-level policy that filters everything out returns
+    // an EMPTY SET, not an error -- so an error probe alone cannot tell
+    // "you may not see these rows" from "there are no rows", which is the
+    // exact confusion this function exists to end. Ask about access first,
+    // explicitly, and only then about content.
+    const { data: approved, error: approvalError } = await supabase.rpc("is_approved");
+    if (!approvalError && approved === false) {
+      failure = {
+        reason:
+          "Your account is not approved, so the market data policies return no rows. " +
+          "An admin can approve it in /admin/users, or set access_status = 'APPROVED' " +
+          "on your profiles row.",
+      };
+      return { snapshots, failure };
+    }
+
+    // The asset list is read before any candle is. If THAT query fails,
+    // every asset comes back null having never looked at a candle, and
+    // blaming the candles table would send the reader to the wrong place.
+    const { error: assetsError } = await supabase.from("assets").select("id").limit(1);
+    if (assetsError) {
+      failure = { reason: `The assets table could not be read: ${assetsError.message}` };
+      return { snapshots, failure };
+    }
+
+    const { error: candlesError } = await supabase.from("candles").select("id").limit(1);
+    if (candlesError) failure = { reason: candlesError.message };
   } catch (err) {
     failure = { reason: err instanceof Error ? err.message : "Could not reach the database." };
   }
