@@ -176,9 +176,25 @@ PROBES = [
      lambda: has_column("signals", "data_source") and has_column("assets", "market_type"), True),
     ("20260830000017_expiry_seconds",
      lambda: has_column("strategy_configs", "expiry_seconds"), True),
+    # 18 does not block the collector -- it writes with the service role,
+    # which bypasses RLS. It blocks the WEB APP, which is a different
+    # failure and reported separately below.
+    ("20260902000018_access_approval",
+     lambda: has_column("profiles", "access_status"), False),
+    # 19 DOES block writes: the engine now sends call_score/put_score on
+    # every insert, and PostgREST rejects the whole row for an unknown
+    # column. Without it no signal is stored at all.
+    ("20260902000019_dual_side_scores",
+     lambda: has_column("signals", "call_score"), True),
+    ("20260902000020_public_preview",
+     lambda: has_function("public_performance"), False),
 ]
 
 FEATURE_LOST = {
+    "20260902000018_access_approval":
+        "signup approval gate (the collector is unaffected)",
+    "20260902000020_public_preview":
+        "the landing page cannot show live figures (signals are unaffected)",
     "20260830000012_notification_prefs_crypto":
         "crypto + B-grade notification toggles (signals are unaffected)",
     "20260830000013_admin_list_users":
@@ -187,6 +203,7 @@ FEATURE_LOST = {
 
 blocking: list[str] = []
 optional: list[str] = []
+web_blocked: list[str] = []
 for name, probe, blocks in PROBES:
     try:
         applied = probe()
@@ -441,10 +458,69 @@ if overdue:
 else:
     line(OK, "nothing overdue")
 
+# ------------------------------------------------------- 12. web app access
+#
+# The collector writes with the SERVICE ROLE, which bypasses row-level
+# security entirely. So the collector can be perfectly healthy -- storing
+# candles, producing decisions -- while the website shows nothing at all,
+# and every section above will look fine.
+#
+# That is not hypothetical: it is what happened after migration 18 gated
+# the user-facing reads on is_approved(). A policy that filters everything
+# out returns an EMPTY SET, not an error, so the site said "no candle has
+# ever been stored" about a table with hundreds of thousands of rows.
+head("12. Web app access (can the SITE read what the collector wrote?)")
+
+if not has_column("profiles", "access_status"):
+    line(INFO, "migration 18 not applied — the site reads without an approval check")
+else:
+    try:
+        rows = client.table("profiles").select("id, role, access_status").execute().data or []
+        if not rows:
+            line(BAD, "no profiles exist — nobody can sign in, so the site will show nothing")
+            web_blocked.append("no profile rows")
+        else:
+            approved = [r for r in rows if r.get("access_status") == "APPROVED" or r.get("role") == "admin"]
+            pending_users = [r for r in rows if r not in approved]
+            line(OK if approved else BAD,
+                 f"{len(approved)} of {len(rows)} account(s) can read market data")
+            for r in pending_users:
+                line(WARN, f"  {r['id'][:8]}… is {r.get('access_status')} — this account sees an empty dashboard")
+            if not approved:
+                web_blocked.append("every account is unapproved")
+            admins = [r for r in rows if r.get("role") == "admin"]
+            if not admins:
+                line(WARN, "no admin account — /admin is unreachable and nobody can approve anyone")
+                web_blocked.append("no admin account")
+            else:
+                line(OK, f"{len(admins)} admin account(s)")
+    except Exception as exc:  # noqa: BLE001
+        line(BAD, f"could not read profiles: {type(exc).__name__}: {exc}")
+        web_blocked.append("profiles unreadable")
+
+if web_blocked:
+    line(BAD, "the SITE is blocked even though the collector may be fine — fix with:")
+    line(INFO, "  update profiles set role='admin', access_status='APPROVED'")
+    line(INFO, "  where id = (select id from auth.users where email='YOUR@EMAIL');")
+
 # ----------------------------------------------------------------- verdict
 print()
 print("=" * 68)
-if not collector_alive:
+# Reported FIRST, because a healthy collector and an empty website is the
+# state most likely to be misdiagnosed: every other section says "OK" while
+# the thing the user is looking at shows nothing.
+if web_blocked:
+    print("VERDICT: the collector may be fine, but the WEBSITE is blocked.")
+    print()
+    print("         Reason: " + "; ".join(web_blocked) + ".")
+    print()
+    print("         The collector writes with the service role and bypasses row-level")
+    print("         security, so it can be perfectly healthy while the site shows")
+    print("         'no data'. Fix the account, not the collector:")
+    print()
+    print("             update profiles set role='admin', access_status='APPROVED'")
+    print("             where id = (select id from auth.users where email='YOUR@EMAIL');")
+elif not collector_alive:
     print("VERDICT: the collector is NOT RUNNING. Nothing above is live.")
     print()
     print("         Start it in its OWN terminal window and leave that window open:")
