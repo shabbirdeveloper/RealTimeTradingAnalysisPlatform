@@ -58,17 +58,16 @@ export default async function DashboardHomePage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Live analysis across your three configured instruments.</p>
+        <p className="text-sm text-muted-foreground">Live analysis across your {ASSET_LIST.length} configured instruments.</p>
       </div>
 
       <div className="flex items-start gap-2.5 rounded-lg border border-notrade/20 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-notrade" />
         <span>
-          <strong className="font-semibold">Prices and signals below are real</strong> — computed from live candles
-          by the technical signal engine. There is no calibrated ML confidence yet (Phase 6), so grades are capped at
-          B until real models exist. The accuracy/streak figures further down are still{" "}
-          <strong className="font-semibold">synthetic placeholders</strong> — real performance tracking needs
-          resolved signal history to accumulate first.
+          <strong className="font-semibold">Everything below is real</strong> — prices, signals and accuracy are
+          computed from live candles and resolved outcomes. There is no calibrated ML confidence yet (Phase 6), so
+          grades are capped at B until trained models exist. Accuracy is measured on a small number of resolved
+          signals so far; read the interval, not the headline figure.
         </span>
       </div>
 

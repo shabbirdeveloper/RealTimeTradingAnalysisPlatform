@@ -8,6 +8,7 @@ import { ASSET_CONFIGS } from "@/data/assets";
 import type { DataStatus, Signal } from "@/types";
 import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { MarketRead } from "@/components/dashboard/market-read";
 
 export function AssetSignalCard({
   signal,
@@ -76,11 +77,15 @@ export function AssetSignalCard({
           </div>
 
           {isNoTrade ? (
-            <div className="rounded-md border border-dashed border-border bg-secondary/30 p-3">
+            <div className="space-y-3 rounded-md border border-dashed border-border bg-secondary/30 p-3">
               <DirectionBadge direction="NO_TRADE" />
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {signal.warnings[0] ?? signal.reasons[0] ?? "Market conditions not strong enough."}
               </p>
+              {/* Without this the card is a static word. The engine's read
+                  moves every cycle even when the answer stays no, and
+                  hiding that makes a working system look frozen. */}
+              <MarketRead signal={signal} />
             </div>
           ) : (
             <div className="space-y-3 border-t border-border/70 pt-3.5">
