@@ -24,7 +24,7 @@ class TimeframeBias:
     insufficient_data: bool = False
 
 
-def bias_for_timeframe(timeframe: str, candles: list[dict]) -> TimeframeBias:
+def bias_for_timeframe(timeframe: str, candles: list[dict], *, min_votes: int = 2) -> TimeframeBias:
     closes = [float(c["close"]) for c in candles]
 
     ema20 = ind.ema_latest(closes, 20)
@@ -91,10 +91,14 @@ def bias_for_timeframe(timeframe: str, candles: list[dict]) -> TimeframeBias:
         votes -= 1
         bear_notes.append("Lower-high / lower-low structure")
 
-    if votes >= 2:
+    # `min_votes` used to be the literal 2. It governs how often a timeframe
+    # reads NEUTRAL -- and since a NEUTRAL vote can never agree with
+    # anything, it silently governs the multi-timeframe gate downstream. A
+    # number with that much leverage should be measurable, not baked in.
+    if votes >= min_votes:
         bias = "BULLISH"
         notes = bull_notes or ["Bullish confluence across indicators."]
-    elif votes <= -2:
+    elif votes <= -min_votes:
         bias = "BEARISH"
         notes = bear_notes or ["Bearish confluence across indicators."]
     else:

@@ -104,6 +104,11 @@ DEFAULT_MIN_TECHNICAL_SCORE = 78
 # is no history to split.
 DEFAULT_LABEL = "v2"
 
+# Extracted from constants that were hardcoded in the engine. Changing a
+# default here changes every fingerprint; changing an instance does not.
+DEFAULT_MIN_TIMEFRAME_AGREEMENT = 3
+DEFAULT_MIN_BIAS_VOTES = 2
+
 
 @dataclass(frozen=True)
 class StrategyConfig:
@@ -165,6 +170,23 @@ class AssetStrategy:
     label: str
     by_expiry: Mapping[int, StrategyConfig]
 
+    # How many of the four timeframes must point the same way before a
+    # direction is even proposed. Asset-level rather than per-expiry: the
+    # timeframe read does not change with the horizon being considered.
+    #
+    # 3 of 4 is where this started, and it is the gate that stops the large
+    # majority of cycles -- so it is also the least evidence-backed number
+    # in the system. Making it a parameter is what lets gate_sweep.py
+    # measure the alternatives instead of arguing about them.
+    min_timeframe_agreement: int = DEFAULT_MIN_TIMEFRAME_AGREEMENT
+
+    # How many of a timeframe's five voters (EMA20/50, EMA200, RSI, MACD,
+    # swing structure) must agree before that timeframe commits to a
+    # direction at all. Below this it reads NEUTRAL -- and a NEUTRAL vote
+    # can never contribute to agreement above, so this number silently
+    # governs the one above it.
+    min_bias_votes: int = DEFAULT_MIN_BIAS_VOTES
+
     def __post_init__(self) -> None:
         if not self.by_expiry:
             raise ValueError(f"AssetStrategy for {self.asset} offers no expiries")
@@ -175,6 +197,15 @@ class AssetStrategy:
 
     def for_expiry(self, expiry_seconds: int) -> StrategyConfig:
         return self.by_expiry[expiry_seconds]
+
+    def with_gates(self, *, agreement: int | None = None, bias_votes: int | None = None) -> "AssetStrategy":
+        """Vary the two gate knobs, hold everything else fixed. The sweep's
+        counterpart to with_min_score()."""
+        return replace(
+            self,
+            min_timeframe_agreement=self.min_timeframe_agreement if agreement is None else agreement,
+            min_bias_votes=self.min_bias_votes if bias_votes is None else bias_votes,
+        )
 
     def with_min_score(self, score: int) -> "AssetStrategy":
         """Every expiry forced to the same minimum score. This is what the
@@ -230,6 +261,20 @@ def _canonical(strategy: AssetStrategy) -> str:
             for e, c in sorted(strategy.by_expiry.items())
         ],
     }
+    # Gate knobs are recorded ONLY when they differ from the defaults.
+    #
+    # These parameters were extracted from constants that were already
+    # baked into the engine, so a strategy sitting at the defaults is the
+    # same rule set that produced the existing history -- and it must keep
+    # the same fingerprint, or extracting a constant would silently split
+    # a sample in two and make past and present results unppoolable for no
+    # reason. Any non-default value is a genuinely different rule set and
+    # does change the fingerprint.
+    if strategy.min_timeframe_agreement != DEFAULT_MIN_TIMEFRAME_AGREEMENT:
+        payload["min_timeframe_agreement"] = strategy.min_timeframe_agreement
+    if strategy.min_bias_votes != DEFAULT_MIN_BIAS_VOTES:
+        payload["min_bias_votes"] = strategy.min_bias_votes
+
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 

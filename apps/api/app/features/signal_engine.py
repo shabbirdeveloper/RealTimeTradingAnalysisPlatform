@@ -267,7 +267,7 @@ def build_signal(
     session = struct.session_for_time(now)
 
     timeframes: list[TimeframeBias] = [
-        bias_for_timeframe(tf, candles_by_timeframe.get(tf, []))
+        bias_for_timeframe(tf, candles_by_timeframe.get(tf, []), min_votes=strategy.min_bias_votes)
         for tf in profile.timeframes
     ]
 
@@ -383,7 +383,7 @@ def build_signal(
     bull_votes = sum(1 for t in timeframes if t.bias == "BULLISH")
     bear_votes = sum(1 for t in timeframes if t.bias == "BEARISH")
 
-    needed = 3
+    needed = strategy.min_timeframe_agreement
     proposed_direction = "NO_TRADE"
     if bull_votes >= needed:
         proposed_direction = "CALL"

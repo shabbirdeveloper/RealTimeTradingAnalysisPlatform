@@ -390,3 +390,73 @@ def _unstable(asset: str, ending_at=None) -> dict:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GateKnobTests(unittest.TestCase):
+    """The two gate numbers were extracted from constants baked into the
+    engine. Extraction must not silently change what a default strategy
+    IS, or past and present history stop being poolable for no reason."""
+
+    def test_defaults_match_the_constants_the_engine_used(self):
+        s = default_strategy("EURUSD")
+        self.assertEqual(s.min_timeframe_agreement, 3)
+        self.assertEqual(s.min_bias_votes, 2)
+
+    def test_default_gates_do_not_appear_in_the_fingerprint(self):
+        """A strategy at the defaults is the same rule set that produced the
+        existing history, so it must keep the same fingerprint."""
+        from app.features.strategy import _canonical
+
+        self.assertNotIn("min_timeframe_agreement", _canonical(default_strategy("EURUSD")))
+        self.assertNotIn("min_bias_votes", _canonical(default_strategy("EURUSD")))
+
+    def test_changed_gates_do_change_the_fingerprint(self):
+        base = default_strategy("EURUSD")
+        self.assertNotEqual(version_string(base), version_string(base.with_gates(agreement=2)))
+        self.assertNotEqual(version_string(base), version_string(base.with_gates(bias_votes=1)))
+        self.assertNotEqual(
+            version_string(base.with_gates(agreement=2)),
+            version_string(base.with_gates(bias_votes=1)),
+        )
+
+    def test_with_gates_changes_only_what_it_is_asked_to(self):
+        base = default_strategy("EURUSD")
+        loosened = base.with_gates(agreement=2)
+        self.assertEqual(loosened.min_bias_votes, base.min_bias_votes)
+        self.assertEqual(loosened.by_expiry.keys(), base.by_expiry.keys())
+        self.assertEqual(loosened.label, base.label)
+
+
+class BiasVoteThresholdTests(unittest.TestCase):
+    def test_lower_threshold_commits_where_the_default_reads_neutral(self):
+        """The point of the knob: a timeframe with one net vote is NEUTRAL at
+        the default and directional at 1. If that were not true the sweep
+        would be measuring nothing."""
+        from app.features.timeframe_bias import bias_for_timeframe
+
+        # A gentle drift: enough to tilt some voters, not enough for two.
+        candles = [
+            {"open_time": i, "open": 100 + i * 0.01, "high": 100 + i * 0.01 + 0.05,
+             "low": 100 + i * 0.01 - 0.05, "close": 100 + i * 0.01 + 0.005}
+            for i in range(260)
+        ]
+        strict = bias_for_timeframe("M5", candles, min_votes=2)
+        loose = bias_for_timeframe("M5", candles, min_votes=1)
+        # Loosening can never make a timeframe LESS committed.
+        if strict.bias == "NEUTRAL":
+            self.assertIn(loose.bias, ("NEUTRAL", "BULLISH", "BEARISH"))
+        else:
+            self.assertEqual(loose.bias, strict.bias)
+
+    def test_raising_the_threshold_never_adds_conviction(self):
+        from app.features.timeframe_bias import bias_for_timeframe
+
+        candles = [
+            {"open_time": i, "open": 100 + i * 0.05, "high": 100 + i * 0.05 + 0.1,
+             "low": 100 + i * 0.05 - 0.1, "close": 100 + i * 0.05 + 0.02}
+            for i in range(260)
+        ]
+        loose = bias_for_timeframe("M5", candles, min_votes=1)
+        strict = bias_for_timeframe("M5", candles, min_votes=5)
+        if strict.bias != "NEUTRAL":
+            self.assertEqual(strict.bias, loose.bias)

@@ -120,6 +120,33 @@ class TestRunBacktest(unittest.TestCase):
             closed = replay.candles_closed_by(history["M5"], "M5", o.generated_at)
             self.assertEqual(o.entry_price, float(closed[-1]["close"]))
 
+    def test_expiry_is_resolved_in_seconds_not_minutes(self):
+        """A 900-second expiry must resolve 15 minutes later, not 15 hours.
+
+        This line predated the seconds migration and kept `timedelta(minutes=)`
+        against a value that had become seconds, so every backtest measured a
+        horizon ~60x too long. That is not a rounding error -- a 15-minute
+        binary outcome and a 15-hour one are different questions, and the
+        threshold sweep built on it was answering the wrong one.
+        """
+        history = uptrend_history(future_bars=400)
+        summary = run_backtest(
+            {"XAUUSD": history}, start=END - timedelta(hours=3), end=END,
+            technical_score_threshold=1, step_minutes=15,
+        )
+        resolved = [o for o in summary.opportunities if o.accepted and o.closing_price is not None]
+        self.assertTrue(resolved, "expected at least one resolved opportunity")
+
+        m5 = history["M5"]
+        for o in resolved:
+            expected_at = o.generated_at + timedelta(seconds=o.expiry_seconds)
+            expected = replay.first_candle_at_or_after(m5, expected_at)
+            self.assertIsNotNone(expected)
+            self.assertEqual(
+                o.closing_price, expected["close"],
+                f"{o.expiry_seconds}s expiry resolved against the wrong candle",
+            )
+
     def test_breakdowns_cover_accepted_signals(self):
         summary = run_backtest(
             {"XAUUSD": uptrend_history()}, start=END - timedelta(hours=3), end=END,

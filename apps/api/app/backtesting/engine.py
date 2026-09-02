@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from app.backtesting import replay
@@ -128,8 +129,14 @@ def run_backtest(
     session_filter: str | None = None,
     regime_filter: str | None = None,
     step_minutes: int = 5,
+    strategy_for: Callable[[str], object] | None = None,
 ) -> BacktestSummary:
     """Replays `start`..`end` for every asset in `candles_by_asset`.
+
+    `strategy_for(asset)` supplies the rule set to replay with. Left None,
+    each asset uses its shipped defaults -- which is what the threshold sweep
+    wants. gate_sweep.py passes a factory so the multi-timeframe gates can be
+    varied the same way the score threshold already can.
 
     `candles_by_asset` is {asset: {timeframe: candles oldest-first}} --
     the full available history, INCLUDING bars after `end`, which are used
@@ -159,7 +166,9 @@ def run_backtest(
             sliced = {tf: candles[-_MAX_LOOKBACK_BARS:] for tf, candles in sliced.items()}
 
             decision = build_signal(
-                asset, sliced, now=as_of, technical_score_threshold=technical_score_threshold
+                asset, sliced, now=as_of,
+                technical_score_threshold=technical_score_threshold,
+                strategy=strategy_for(asset) if strategy_for else None,
             )
 
             is_rejected_opportunity = decision.rejected_opportunity_direction is not None
@@ -195,7 +204,14 @@ def run_backtest(
             )
 
             if opportunity.accepted and expiry is not None and opportunity.entry_price:
-                expiry_at = as_of + timedelta(minutes=expiry)
+                # SECONDS, not minutes. `expiry` is decision.expiry_seconds;
+                # this line predates the seconds migration and kept the old
+                # unit, so a 900-second horizon was resolved 900 MINUTES
+                # later -- fifteen hours instead of fifteen minutes. Every
+                # backtest and threshold sweep run before this fix measured
+                # a horizon roughly sixty times too long, which is why they
+                # all came out near a coin flip regardless of threshold.
+                expiry_at = as_of + timedelta(seconds=expiry)
                 exit_candle = replay.first_candle_at_or_after(m5, expiry_at)
                 if exit_candle is not None:
                     closing_price = float(exit_candle["close"])
