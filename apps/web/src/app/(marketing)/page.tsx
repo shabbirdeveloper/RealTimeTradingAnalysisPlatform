@@ -55,7 +55,11 @@ export default async function LandingPage() {
             <div className="hidden h-8 w-px bg-border sm:block" />
             <Stat value={3} label="Expiries" />
             <div className="hidden h-8 w-px bg-border sm:block" />
-            <Stat value={performance.resolved} label="Signals resolved" accent />
+            {performance.available ? (
+              <Stat value={performance.resolved} label="Signals resolved" accent />
+            ) : (
+              <Stat value="—" label="Signals resolved" />
+            )}
           </div>
         </div>
       </section>
@@ -84,7 +88,18 @@ export default async function LandingPage() {
                 Measured performance
               </p>
 
-              {performance.resolved < 30 ? (
+              {!performance.available ? (
+                <>
+                  <p className="font-mono-tabular text-2xl font-semibold text-muted-foreground">
+                    Not available
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Performance figures cannot be read right now. This is a connection or
+                    setup problem on our side, not a result — a zero here would have been a
+                    claim, and we would rather say nothing than say something untrue.
+                  </p>
+                </>
+              ) : performance.resolved < 30 ? (
                 <>
                   <p className="font-mono-tabular text-2xl font-semibold text-foreground">
                     Too early to say

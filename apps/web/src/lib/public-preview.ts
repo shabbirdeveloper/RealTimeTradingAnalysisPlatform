@@ -53,6 +53,13 @@ export async function getPublicPreview(): Promise<PreviewRow[]> {
 }
 
 export interface PublicPerformance {
+  /**
+   * False when the query itself failed — most often because migration 20
+   * has not been run yet. Without this, "0 resolved" means both "nothing
+   * has expired" and "this page cannot read anything", which are opposite
+   * problems that need opposite responses.
+   */
+  available: boolean;
   wins: number;
   losses: number;
   draws: number;
@@ -87,7 +94,8 @@ function wilson(wins: number, total: number): { low: number; high: number } {
 }
 
 export async function getPublicPerformance(): Promise<PublicPerformance> {
-  const empty: PublicPerformance = {
+  const unavailable: PublicPerformance = {
+    available: false,
     wins: 0, losses: 0, draws: 0, signalsTotal: 0, resolved: 0,
     accuracy: null, interval: null, breakEven: BREAK_EVEN, verdict: "TOO_EARLY",
   };
@@ -95,10 +103,10 @@ export async function getPublicPerformance(): Promise<PublicPerformance> {
   try {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("public_performance");
-    if (error || !data) return empty;
+    if (error || !data) return unavailable;
 
     const row = (data as Array<Record<string, unknown>>)[0];
-    if (!row) return empty;
+    if (!row) return unavailable;
 
     const wins = Number(row.wins ?? 0);
     const losses = Number(row.losses ?? 0);
@@ -106,7 +114,8 @@ export async function getPublicPerformance(): Promise<PublicPerformance> {
 
     if (resolved < MIN_RESOLVED) {
       return {
-        ...empty,
+        ...unavailable,
+        available: true,
         wins, losses,
         draws: Number(row.draws ?? 0),
         signalsTotal: Number(row.signals_total ?? 0),
@@ -128,6 +137,7 @@ export async function getPublicPerformance(): Promise<PublicPerformance> {
       : "UNPROVEN";
 
     return {
+      available: true,
       wins, losses,
       draws: Number(row.draws ?? 0),
       signalsTotal: Number(row.signals_total ?? 0),
@@ -136,6 +146,6 @@ export async function getPublicPerformance(): Promise<PublicPerformance> {
       verdict,
     };
   } catch {
-    return empty;
+    return unavailable;
   }
 }
