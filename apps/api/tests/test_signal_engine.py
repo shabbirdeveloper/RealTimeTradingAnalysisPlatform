@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from app.features.signal_engine import build_signal
+from app.features.strategy import default_strategy
 
 
 def make_candles(n: int, start_price: float, drift_per_bar: float, step_minutes: int,
@@ -378,3 +379,71 @@ class DecisionChecksExplainThemselves(unittest.TestCase):
         self.assertFalse(gate.passed)
         self.assertIn("/100", gate.value or "")
         self.assertIn("99", gate.required or "")
+
+
+def uptrend():
+    """A clean rising series across all four timeframes, ending now."""
+    return {
+        "H4": make_candles(260, 2400, 3.0, 240),
+        "H1": make_candles(260, 2400, 1.0, 60),
+        "M15": make_candles(260, 2400, 0.4, 15),
+        "M5": make_candles(260, 2400, 0.2, 5),
+    }
+
+
+class DualScoringTests(unittest.TestCase):
+    """The separation gate, end to end through build_signal."""
+
+    def _decision(self, history, **kwargs):
+        return build_signal("XAUUSD", history, **kwargs)
+
+    def test_every_decision_reports_both_sides(self):
+        d = self._decision(uptrend())
+        self.assertIsInstance(d.call_score, int)
+        self.assertIsInstance(d.put_score, int)
+        self.assertEqual(d.score_difference, abs(d.call_score - d.put_score))
+
+    def test_the_separation_check_is_recorded_even_when_it_passes(self):
+        """A gate that only appears when it fails is a gate nobody can audit."""
+        d = self._decision(uptrend())
+        names = [c.name for c in d.checks]
+        self.assertIn("Directional separation", names)
+
+    def test_default_separation_of_zero_changes_nothing(self):
+        """Introducing a gate must not silently retune the engine. The
+        default reproduces the previous behaviour exactly."""
+        history = uptrend()
+        base = default_strategy("XAUUSD")
+        self.assertEqual(base.min_score_difference, 0)
+        relaxed = self._decision(history, strategy=base)
+        self.assertEqual(relaxed.direction, self._decision(history).direction)
+
+    def test_a_demanding_separation_requirement_rejects_a_leaning_market(self):
+        history = uptrend()
+        permissive = self._decision(history, strategy=default_strategy("XAUUSD"))
+        strict = self._decision(
+            history, strategy=default_strategy("XAUUSD").with_gates(score_difference=101),
+        )
+        # 101 is unreachable -- difference is capped at 100 -- so nothing survives.
+        self.assertEqual(strict.direction, "NO_TRADE")
+        if permissive.direction != "NO_TRADE":
+            self.assertNotEqual(strict.direction, permissive.direction)
+
+    def test_rejection_names_both_scores_not_just_the_verdict(self):
+        d = self._decision(
+            uptrend(), strategy=default_strategy("XAUUSD").with_gates(score_difference=101),
+        )
+        blob = " ".join(d.warnings)
+        self.assertIn("CALL", blob)
+        self.assertIn("PUT", blob)
+
+    def test_early_returns_report_absence_not_a_tie(self):
+        """Stale data returns before any evidence is read. 0/0 is truthful
+        there; 50/50 would claim the market was balanced."""
+        stale = build_signal(
+            "XAUUSD", uptrend(),
+            now=datetime.now(timezone.utc) + timedelta(days=3),
+            max_candle_age_minutes=15,
+        )
+        self.assertEqual(stale.direction, "NO_TRADE")
+        self.assertEqual((stale.call_score, stale.put_score), (0, 0))

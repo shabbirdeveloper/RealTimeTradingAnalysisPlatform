@@ -47,7 +47,7 @@ export async function getLatestSignals(): Promise<Record<AssetSymbol, Signal | n
         const { data } = await supabase
           .from("signals")
           .select(
-            "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
+            "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
           )
           .eq("asset_id", assetRow.id)
           .order("last_evaluated_at", { ascending: false, nullsFirst: false })
@@ -84,7 +84,7 @@ export async function getLatestSignal(asset: AssetSymbol): Promise<Signal | null
     const { data } = await supabase
       .from("signals")
       .select(
-        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
+        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
       )
       .eq("asset_id", (assetRow as { id: string }).id)
       .order("last_evaluated_at", { ascending: false, nullsFirst: false })
@@ -108,6 +108,8 @@ interface SignalRow {
   expiry_seconds?: number | null;
   expiry_at: string | null;
   technical_score: number;
+  call_score?: number | null;
+  put_score?: number | null;
   calibrated_confidence: number | null;
   grade: SignalGrade;
   market_regime: MarketRegime;
@@ -157,6 +159,8 @@ function shapeSignal(asset: AssetSymbol, row: SignalRow): Signal {
     direction: row.direction,
     confidence: row.calibrated_confidence,
     technicalScore: row.technical_score,
+    callScore: row.call_score ?? null,
+    putScore: row.put_score ?? null,
     grade: row.grade,
     checks: (row.timeframes_snapshot?.checks ?? []).map((c) => ({
       name: c.name,

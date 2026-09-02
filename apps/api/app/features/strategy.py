@@ -108,6 +108,9 @@ DEFAULT_LABEL = "v2"
 # default here changes every fingerprint; changing an instance does not.
 DEFAULT_MIN_TIMEFRAME_AGREEMENT = 3
 DEFAULT_MIN_BIAS_VOTES = 2
+# 0 reproduces the behaviour that existed before CALL and PUT were scored
+# separately. A parameter, not a guess: gate_sweep.py measures it.
+DEFAULT_MIN_SCORE_DIFFERENCE = 0
 
 
 @dataclass(frozen=True)
@@ -187,6 +190,12 @@ class AssetStrategy:
     # governs the one above it.
     min_bias_votes: int = DEFAULT_MIN_BIAS_VOTES
 
+    # Minimum gap between the CALL and PUT scores before either is acted
+    # on. CALL 78 against PUT 70 is not a 78-quality setup -- it is a
+    # market with no clear direction that happens to lean, and the old
+    # single score could not see the difference. See features/scoring.py.
+    min_score_difference: int = DEFAULT_MIN_SCORE_DIFFERENCE
+
     def __post_init__(self) -> None:
         if not self.by_expiry:
             raise ValueError(f"AssetStrategy for {self.asset} offers no expiries")
@@ -198,13 +207,22 @@ class AssetStrategy:
     def for_expiry(self, expiry_seconds: int) -> StrategyConfig:
         return self.by_expiry[expiry_seconds]
 
-    def with_gates(self, *, agreement: int | None = None, bias_votes: int | None = None) -> "AssetStrategy":
+    def with_gates(
+        self,
+        *,
+        agreement: int | None = None,
+        bias_votes: int | None = None,
+        score_difference: int | None = None,
+    ) -> "AssetStrategy":
         """Vary the two gate knobs, hold everything else fixed. The sweep's
         counterpart to with_min_score()."""
         return replace(
             self,
             min_timeframe_agreement=self.min_timeframe_agreement if agreement is None else agreement,
             min_bias_votes=self.min_bias_votes if bias_votes is None else bias_votes,
+            min_score_difference=(
+                self.min_score_difference if score_difference is None else score_difference
+            ),
         )
 
     def with_min_score(self, score: int) -> "AssetStrategy":
@@ -274,6 +292,8 @@ def _canonical(strategy: AssetStrategy) -> str:
         payload["min_timeframe_agreement"] = strategy.min_timeframe_agreement
     if strategy.min_bias_votes != DEFAULT_MIN_BIAS_VOTES:
         payload["min_bias_votes"] = strategy.min_bias_votes
+    if strategy.min_score_difference != DEFAULT_MIN_SCORE_DIFFERENCE:
+        payload["min_score_difference"] = strategy.min_score_difference
 
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 

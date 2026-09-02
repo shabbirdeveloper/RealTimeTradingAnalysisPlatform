@@ -62,6 +62,17 @@ export function MarketRead({ signal }: { signal: Signal }) {
         })}
       </div>
 
+      {/* CALL against PUT, scored from the same evidence and neither derived
+          from the other. The bars deliberately do not fill the row: the space
+          left over is evidence nobody committed, which is a different state
+          from the two sides being balanced. */}
+      {signal.callScore != null && signal.putScore != null && (
+        <div className="space-y-1">
+          <SideBar label="Call" value={signal.callScore} tone="call" />
+          <SideBar label="Put" value={signal.putScore} tone="put" />
+        </div>
+      )}
+
       {pct !== null && (
         <div>
           <div className="flex items-baseline justify-between text-[10.5px]">
@@ -80,13 +91,39 @@ export function MarketRead({ signal }: { signal: Signal }) {
       )}
 
       <p className="text-[10.5px] text-muted-foreground">
-        {agreement}
+        {signal.callScore != null && signal.putScore != null
+          ? `${Math.abs(signal.callScore - signal.putScore)} apart · ${agreement}`
+          : agreement}
         {" · "}
         <span className={cn(stale && "text-destructive")}>
           {stale ? "last checked " : "checked "}
           {formatRelative(lastChecked)}
         </span>
       </p>
+    </div>
+  );
+}
+
+function SideBar({ label, value, tone }: { label: string; value: number; tone: "call" | "put" }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-7 shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
+        <div
+          className={cn("h-full rounded-full transition-all duration-500", tone === "call" ? "bg-call" : "bg-put")}
+          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+        />
+      </div>
+      <span
+        className={cn(
+          "w-6 shrink-0 text-right font-mono-tabular text-[11px] font-semibold",
+          tone === "call" ? "text-call" : "text-put"
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }

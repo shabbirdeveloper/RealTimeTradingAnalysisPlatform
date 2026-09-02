@@ -168,6 +168,10 @@ def insert_signal(asset: Asset, decision: SignalDecision) -> SignalWrite:
         "expiry_seconds": expiry_seconds,
         "expiry_at": expiry_at,
         "technical_score": decision.technical_score,
+        # Both sides, so a stored decision stays explicable without
+        # re-deriving it. score_difference is generated in the database.
+        "call_score": decision.call_score,
+        "put_score": decision.put_score,
         "raw_probability": None,  # Phase 6 (ML) not built -- never fabricated
         "calibrated_confidence": None,
         "grade": decision.grade,

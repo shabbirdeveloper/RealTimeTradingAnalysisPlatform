@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from app.features import structure as struct
+from app.features.scoring import SideScores, side_scores
 from app.features.timeframe_bias import TimeframeBias, bias_for_timeframe
 from app.features.regime import classify_regime
 from app.market_data.closed_bars import interval_seconds
@@ -126,6 +127,16 @@ class SignalDecision:
     # timeframes, insufficient data, or an unstable/high-vol regime) where
     # no directional bias ever existed. See signal_repository.py.
     rejected_opportunity_direction: str | None = None
+    # Both sides, scored independently (spec section 21). They are not
+    # complements: call + put < 100 whenever voters abstained, and that gap
+    # says "no evidence", which is a different state from "evidence
+    # balanced". See features/scoring.py.
+    call_score: int = 0
+    put_score: int = 0
+
+    @property
+    def score_difference(self) -> int:
+        return abs(self.call_score - self.put_score)
 
 
 def _staleness_reason(
@@ -262,6 +273,10 @@ def build_signal(
     # bias the recorded sample toward the cycles that happened to reach the
     # end of the function.
     stamp = version_string(strategy)
+    # Neutral until the timeframes exist. The early returns below (stale
+    # data, news blackout, warm-up) happen BEFORE any evidence has been
+    # read, and 0/0 is the truthful pair for them -- not a tie, an absence.
+    sides = SideScores(call=0, put=0)
 
     now = now or datetime.now(timezone.utc)
     session = struct.session_for_time(now)
@@ -332,7 +347,7 @@ def build_signal(
             expiry_seconds=None, market_regime="UNSTABLE", regime_reason=stale_reason,
             entry_price=entry_price, session=session,
             reasons=["Market data is not fresh enough to analyse."],
-            warnings=warnings + standing, timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], checks=checks, call_score=sides.call, put_score=sides.put, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     blackout = evaluate_blackout(economic_events or [], asset, now, blackout_config)
@@ -361,7 +376,7 @@ def build_signal(
             reasons=["Signal generation paused around a high-impact news release."],
             # Timeframes are still reported: during a pause the trader can
             # see what the market looks like, they just get no signal.
-            warnings=warnings + standing, timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            warnings=warnings + standing, timeframes=timeframes, candidates=[], checks=checks, call_score=sides.call, put_score=sides.put, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     insufficient = [t.timeframe for t in timeframes if t.insufficient_data]
@@ -377,11 +392,21 @@ def build_signal(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Insufficient real history to analyze this asset yet."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            timeframes=timeframes, candidates=[], checks=checks, call_score=sides.call, put_score=sides.put, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     bull_votes = sum(1 for t in timeframes if t.bias == "BULLISH")
     bear_votes = sum(1 for t in timeframes if t.bias == "BEARISH")
+
+    # Both sides, from the same evidence, neither derived from the other
+    # (spec section 21). Weighted by the middle expiry on offer so this is
+    # one comparable pair of numbers for the decision as a whole; each
+    # expiry is scored separately further down.
+    mid_expiry = strategy.expiries[len(strategy.expiries) // 2]
+    sides = side_scores(
+        timeframes,
+        {t.timeframe: _expiry_weight(mid_expiry, t.timeframe, profile) for t in timeframes},
+    )
 
     needed = strategy.min_timeframe_agreement
     proposed_direction = "NO_TRADE"
@@ -401,6 +426,36 @@ def build_signal(
         required=f"{needed} of {len(timeframes)}",
     )
 
+    # Conviction, not just direction. A market that scores CALL 78 against
+    # PUT 70 has no clear view -- it leans. The old single score could not
+    # express that at all, because it was only ever computed for the side
+    # the agreement gate had already picked.
+    separation_ok = sides.difference >= strategy.min_score_difference
+    record(
+        "Directional separation", separation_ok,
+        (f"CALL {sides.call} vs PUT {sides.put}"
+         + (f"; {sides.uncommitted} of the scale uncommitted" if sides.uncommitted >= 40 else "")),
+        value=str(sides.difference),
+        required=f"{strategy.min_score_difference} or more",
+    )
+    if proposed_direction != "NO_TRADE" and not separation_ok:
+        warnings.append(
+            f"CALL {sides.call} and PUT {sides.put} are too close "
+            f"({sides.difference} apart, {strategy.min_score_difference} required) — "
+            "directional conviction is weak."
+        )
+        proposed_direction = "NO_TRADE"
+
+    # A side that leads the agreement gate but trails on score is a
+    # contradiction, not a signal. It happens when the leading timeframes
+    # agree on a direction the individual voters do not support.
+    if proposed_direction != "NO_TRADE" and sides.leader not in (proposed_direction, "NO_TRADE"):
+        warnings.append(
+            f"Timeframes lean {proposed_direction} but the evidence scores "
+            f"{sides.leader} higher (CALL {sides.call} / PUT {sides.put})."
+        )
+        proposed_direction = "NO_TRADE"
+
     record(
         "Market regime", regime not in ("HIGH_VOLATILITY", "UNSTABLE"),
         regime_reason, value=regime.replace("_", " ").lower(),
@@ -419,7 +474,7 @@ def build_signal(
             asset=asset, direction="NO_TRADE", technical_score=0, grade="REJECTED", expiry_seconds=None,
             market_regime=regime, regime_reason=regime_reason, entry_price=entry_price, session=session,
             reasons=["Market conditions not strong enough for a high-quality setup."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=[], checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            timeframes=timeframes, candidates=[], checks=checks, call_score=sides.call, put_score=sides.put, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
         )
 
     target_bias = _bias_label(proposed_direction)
@@ -482,7 +537,7 @@ def build_signal(
             grade="REJECTED", expiry_seconds=None, market_regime=regime, regime_reason=regime_reason,
             entry_price=entry_price, session=session,
             reasons=["Directional bias present but no expiry scored high enough to act on."], warnings=warnings + standing,
-            timeframes=timeframes, candidates=candidates, checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+            timeframes=timeframes, candidates=candidates, checks=checks, call_score=sides.call, put_score=sides.put, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
             rejected_opportunity_direction=proposed_direction,
         )
 
@@ -512,5 +567,5 @@ def build_signal(
         asset=asset, direction=proposed_direction, technical_score=best.technical_score, grade=best.grade,
         expiry_seconds=best.expiry_seconds, market_regime=regime, regime_reason=regime_reason,
         entry_price=entry_price, session=session, reasons=reasons, warnings=warnings + standing,
-        timeframes=timeframes, candidates=candidates, checks=checks, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
+        timeframes=timeframes, candidates=candidates, checks=checks, call_score=sides.call, put_score=sides.put, generated_at=now, strategy_version=stamp, data_source=feed.name if feed else "", market_type=instrument.market_type.value,
     )

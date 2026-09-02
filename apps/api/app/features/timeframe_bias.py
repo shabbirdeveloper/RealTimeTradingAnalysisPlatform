@@ -23,6 +23,30 @@ class TimeframeBias:
     notes: list[str] = field(default_factory=list)
     insufficient_data: bool = False
 
+    # How many of the five voters (EMA20/50, EMA200, RSI, MACD, structure)
+    # came down on each side, kept SEPARATELY rather than netted.
+    #
+    # The net was throwing away the thing most worth knowing. Three voters
+    # up and two down nets to +1, and so does one up and none down -- but
+    # the first is a market arguing with itself and the second is a market
+    # with thin evidence, and they are not the same setup. Netting made
+    # them indistinguishable, and everything downstream inherited that.
+    bull_votes: int = 0
+    bear_votes: int = 0
+
+    @property
+    def voters(self) -> int:
+        """Voters that expressed an opinion. Zero when nothing did, which is
+        a different state from evidence that cancelled out."""
+        return self.bull_votes + self.bear_votes
+
+    @property
+    def conflict(self) -> float:
+        """0.0 when every voter agrees, 1.0 when they split evenly."""
+        if self.voters == 0:
+            return 0.0
+        return 1.0 - abs(self.bull_votes - self.bear_votes) / self.voters
+
 
 def bias_for_timeframe(timeframe: str, candles: list[dict], *, min_votes: int = 2) -> TimeframeBias:
     closes = [float(c["close"]) for c in candles]
@@ -39,19 +63,23 @@ def bias_for_timeframe(timeframe: str, candles: list[dict], *, min_votes: int = 
         return TimeframeBias(
             timeframe=timeframe, bias="NEUTRAL", strength=0,
             notes=[f"Not enough {timeframe} history yet to compute EMA20/50 and RSI."],
-            insufficient_data=True,
+            insufficient_data=True, bull_votes=0, bear_votes=0,
         )
 
     price = closes[-1]
     votes = 0
+    bull = 0
+    bear = 0
     bull_notes: list[str] = []
     bear_notes: list[str] = []
 
     if price > ema20 and ema20 > ema50:
         votes += 1
+        bull += 1
         bull_notes.append("Price above EMA20/50")
     elif price < ema20 and ema20 < ema50:
         votes -= 1
+        bear += 1
         bear_notes.append("Price below EMA20/50")
 
     # EMA200 is included as a full vote alongside the others below rather
@@ -64,31 +92,39 @@ def bias_for_timeframe(timeframe: str, candles: list[dict], *, min_votes: int = 
     if ema200 is not None:
         if price > ema200:
             votes += 1
+            bull += 1
             bull_notes.append("Price above EMA200")
         elif price < ema200:
             votes -= 1
+            bear += 1
             bear_notes.append("Price below EMA200")
 
     if rsi > 55:
         votes += 1
+        bull += 1
         bull_notes.append("RSI trending up")
     elif rsi < 45:
         votes -= 1
+        bear += 1
         bear_notes.append("RSI trending down")
 
     if macd is not None:
         if macd.histogram > 0:
             votes += 1
+            bull += 1
             bull_notes.append("MACD histogram positive" + (" and expanding" if macd.histogram_prev is not None and macd.histogram > macd.histogram_prev else ""))
         elif macd.histogram < 0:
             votes -= 1
+            bear += 1
             bear_notes.append("MACD histogram negative" + (" and expanding" if macd.histogram_prev is not None and macd.histogram < macd.histogram_prev else ""))
 
     if struct_reading.sequence == "HH_HL":
         votes += 1
+        bull += 1
         bull_notes.append("Higher-high / higher-low structure")
     elif struct_reading.sequence == "LH_LL":
         votes -= 1
+        bear += 1
         bear_notes.append("Lower-high / lower-low structure")
 
     # `min_votes` used to be the literal 2. It governs how often a timeframe
@@ -107,4 +143,7 @@ def bias_for_timeframe(timeframe: str, candles: list[dict], *, min_votes: int = 
 
     strength = max(0, min(100, round(50 + votes * 14)))
 
-    return TimeframeBias(timeframe=timeframe, bias=bias, strength=strength, notes=notes[:1], insufficient_data=False)
+    return TimeframeBias(
+        timeframe=timeframe, bias=bias, strength=strength, notes=notes[:1],
+        insufficient_data=False, bull_votes=bull, bear_votes=bear,
+    )

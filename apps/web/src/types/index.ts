@@ -99,6 +99,14 @@ export interface Signal {
   direction: Direction;
   confidence: number | null;
   technicalScore: number;
+  /**
+   * CALL and PUT scored independently from the same evidence. They are NOT
+   * complements — both are low when the timeframes' voters abstained, and
+   * that gap means "no evidence", not "evenly balanced". Null on signals
+   * generated before dual scoring existed.
+   */
+  callScore?: number | null;
+  putScore?: number | null;
   grade: SignalGrade;
   expiryMinutes: ExpiryMinutes | null;
   /** Authoritative horizon in seconds. Broker-OTC trades 15-180s, which

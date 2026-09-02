@@ -14,6 +14,8 @@ Two numbers control that, and neither has ever been measured:
   min_bias_votes         how many of a timeframe's five voters must agree
                          before that timeframe commits to a direction
   min_timeframe_agreement  how many timeframes must then point the same way
+  min_score_difference   how far the CALL score must beat the PUT score
+                         before either is acted on
 
 Loosening them would obviously produce more signals. The only question
 worth asking is whether those extra signals win often enough to pay for
@@ -88,24 +90,29 @@ def main() -> None:
         print("\nNo history in that window. Run backfill.bat first.")
         sys.exit(1)
 
-    combos = [(votes, agree) for votes in (1, 2, 3) for agree in (2, 3, 4)]
+    combos = [
+        (votes, agree, sep)
+        for votes in (1, 2, 3)
+        for agree in (2, 3, 4)
+        for sep in (0, 20, 40)
+    ]
     print(f"\nReplaying {args.days} days x {len(history)} assets, "
           f"{len(combos)} gate combinations, a decision every {args.step} minutes.")
     print("No look-ahead: each decision sees only candles closed at that moment.")
     print("This takes a while -- it is a full replay per combination.\n")
 
-    print(f"{'votes':>5} {'agree':>6} {'setups':>7} {'taken':>6} "
+    print(f"{'votes':>5} {'agree':>6} {'sep':>4} {'setups':>7} {'taken':>6} "
           f"{'W':>5} {'L':>5} {'win rate':>9} {'95% interval':>16}  verdict")
-    print("-" * 84)
+    print("-" * 90)
 
     breakeven = 100 / (1 + PAYOUT)
     current = None
 
-    for votes, agree in combos:
-        def strategy_for(asset: str, _v=votes, _a=agree):
+    for votes, agree, sep in combos:
+        def strategy_for(asset: str, _v=votes, _a=agree, _s=sep):
             profile = get_instrument(asset).profile
             return default_strategy(asset, expiries=profile.expiries_seconds).with_gates(
-                agreement=_a, bias_votes=_v,
+                agreement=_a, bias_votes=_v, score_difference=_s,
             )
 
         summary = run_backtest(
@@ -136,17 +143,17 @@ def main() -> None:
             else:
                 verdict = "indistinguishable"
 
-        marker = " <- current" if (votes, agree) == (2, 3) else ""
-        print(f"{votes:>5} {agree:>6} {len(scored):>7} {len(taken):>6} "
+        marker = " <- current" if (votes, agree, sep) == (2, 3, 0) else ""
+        print(f"{votes:>5} {agree:>6} {sep:>4} {len(scored):>7} {len(taken):>6} "
               f"{wins:>5} {losses:>5} {rate_text:>9} {interval_text:>16}  {verdict}{marker}")
-        if (votes, agree) == (2, 3):
+        if (votes, agree, sep) == (2, 3, 0):
             current = (len(taken), wins, resolved)
 
     print(f"\nBreak-even at an {PAYOUT:.0%} payout is {breakeven:.1f}%.")
     print("The verdict reads the LOWER bound of the interval, so a row claims")
     print("nothing the evidence does not support.\n")
     if current:
-        print(f"Your current gate (2 votes, 3 of 4) took {current[0]} setups, "
+        print(f"Your current gate (2 votes, 3 of 4, no separation floor) took {current[0]} setups, "
               f"{current[2]} resolved.\n")
     print("A row with more signals at the same win rate is NOT an improvement --")
     print("at an 80% payout it is a faster way to lose. Only a row whose lower")
