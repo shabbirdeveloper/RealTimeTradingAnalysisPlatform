@@ -1,4 +1,6 @@
 import { getAdminUsers } from "@/lib/admin";
+import { createClient } from "@/lib/supabase/server";
+import { AccessControls } from "@/components/admin/access-controls";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -9,13 +11,32 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminUsersPage() {
   const result = await getAdminUsers();
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const pendingCount = result.ok
+    ? result.users.filter((u) => u.accessStatus === "PENDING").length
+    : 0;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Users</h1>
-        <p className="text-sm text-muted-foreground">Real accounts from Supabase Auth and the profiles table.</p>
+        <p className="text-sm text-muted-foreground">
+          Real accounts from Supabase Auth and the profiles table. Signup does not grant
+          access — an account sees nothing until it is approved here.
+        </p>
       </div>
+
+      {pendingCount > 0 && (
+        <div className="rounded-lg border border-notrade/25 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">
+          <strong className="font-semibold">
+            {pendingCount} {pendingCount === 1 ? "account is" : "accounts are"} waiting for approval.
+          </strong>{" "}
+          They are listed first below and can see nothing until a decision is made.
+        </div>
+      )}
 
       {!result.ok ? (
         <div className="flex items-start gap-2.5 rounded-lg border border-put/30 bg-put-muted/40 px-3.5 py-2.5 text-xs text-put-foreground">
@@ -42,7 +63,9 @@ export default async function AdminUsersPage() {
                     <TableHead>Email</TableHead>
                     <TableHead>Plan</TableHead>
                     <TableHead>Role</TableHead>
+                    <TableHead>Access</TableHead>
                     <TableHead>Joined</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -59,8 +82,28 @@ export default async function AdminUsersPage() {
                       <TableCell>
                         <Badge variant={u.role === "admin" ? "call" : "secondary"}>{u.role}</Badge>
                       </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            u.accessStatus === "APPROVED"
+                              ? "call"
+                              : u.accessStatus === "REJECTED"
+                                ? "destructive"
+                                : "outline"
+                          }
+                        >
+                          {u.accessStatus ?? "unknown"}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {formatDateTimeUTC(u.createdAt)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <AccessControls
+                          userId={u.id}
+                          status={u.accessStatus}
+                          isSelf={u.id === user?.id}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -69,9 +112,10 @@ export default async function AdminUsersPage() {
             </CardContent>
           </Card>
           <p className="text-xs text-muted-foreground">
-            Read-only. Changing a role or plan from here isn&apos;t implemented — a role change is a privilege
-            escalation path, so it needs a deliberate, audited action rather than an inline toggle. Plans stay
-            read-only until a payment provider is integrated.
+            Access decisions go through <code className="rounded bg-secondary px-1 py-0.5">admin_set_access()</code>,
+            which refuses non-admins, refuses to act on your own account, and writes an audit log entry. Roles are
+            still not editable here — promoting someone to admin is a privilege escalation path and needs a
+            deliberate act, not an inline toggle. Plans stay read-only until a payment provider is integrated.
           </p>
         </>
       )}

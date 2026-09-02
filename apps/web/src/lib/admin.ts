@@ -195,6 +195,8 @@ export async function getAuditLogs(limit = 200): Promise<AuditLogRow[]> {
   }
 }
 
+export type AccessStatus = "PENDING" | "APPROVED" | "REJECTED";
+
 export interface AdminUserRow {
   id: string;
   email: string | null;
@@ -202,6 +204,11 @@ export interface AdminUserRow {
   role: "user" | "admin";
   plan: string;
   subscriptionStatus: string | null;
+  /** Null on a database that has not run migration 18 yet. Treated as
+   *  "unknown", never as approved. */
+  accessStatus: AccessStatus | null;
+  accessDecidedAt: string | null;
+  accessNote: string | null;
   createdAt: string;
 }
 
@@ -226,7 +233,8 @@ export async function getAdminUsers(): Promise<AdminUsersResult> {
     const users = (data ?? []) as Array<{
       id: string; email: string | null; display_name: string | null;
       role: "user" | "admin"; plan: string; subscription_status: string | null;
-      created_at: string;
+      access_status?: AccessStatus | null; access_decided_at?: string | null;
+      access_note?: string | null; created_at: string;
     }>;
     return {
       ok: true,
@@ -237,6 +245,9 @@ export async function getAdminUsers(): Promise<AdminUsersResult> {
         role: u.role,
         plan: u.plan,
         subscriptionStatus: u.subscription_status,
+        accessStatus: u.access_status ?? null,
+        accessDecidedAt: u.access_decided_at ?? null,
+        accessNote: u.access_note ?? null,
         createdAt: u.created_at,
       })),
     };
@@ -533,6 +544,7 @@ export interface AdminOverview {
   totalUsers: number | null;
   subscribers: number | null;
   usersError: string | null;
+  pendingApprovals: number | null;
   signalsToday: number;
   aPlusPlusToday: number;
   rejectedToday: number;
@@ -550,7 +562,7 @@ export interface AdminOverview {
 
 export async function getAdminOverview(): Promise<AdminOverview> {
   const empty: AdminOverview = {
-    totalUsers: null, subscribers: null, usersError: null,
+    totalUsers: null, subscribers: null, usersError: null, pendingApprovals: null,
     signalsToday: 0, aPlusPlusToday: 0, rejectedToday: 0, decisionsToday: 0,
     resolvedTotal: 0, wins: 0, losses: 0, accuracy: null,
     components: [], newestCandleAt: null,
@@ -596,6 +608,9 @@ export async function getAdminOverview(): Promise<AdminOverview> {
         ? usersResult.users.filter((u: AdminUserRow) => u.subscriptionStatus === "active").length
         : null,
       usersError: usersResult.ok ? null : usersResult.error,
+      pendingApprovals: usersResult.ok
+        ? usersResult.users.filter((u: AdminUserRow) => u.accessStatus === "PENDING").length
+        : null,
       signalsToday,
       aPlusPlusToday: today.filter((r) => r.grade === "A++" && r.status !== "REJECTED").length,
       rejectedToday: today.filter((r) => r.status === "REJECTED").length,

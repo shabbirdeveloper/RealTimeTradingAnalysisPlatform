@@ -1,6 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { getAdminOverview } from "@/lib/admin";
 import { formatDateTimeUTC, formatRelative, isCheckStale } from "@/lib/utils";
+import Link from "next/link";
 import { Users, CreditCard, Radio, Award, Target, Filter } from "lucide-react";
 import { StatusDot } from "@/components/admin/status-dot";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,18 @@ export default async function AdminOverviewPage() {
           platform genuinely cannot answer yet.
         </p>
       </div>
+
+      {(o.pendingApprovals ?? 0) > 0 && (
+        <Link
+          href="/admin/users"
+          className="block rounded-lg border border-notrade/25 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90 hover:border-notrade/50"
+        >
+          <strong className="font-semibold">
+            {o.pendingApprovals} {o.pendingApprovals === 1 ? "account is" : "accounts are"} waiting for approval.
+          </strong>{" "}
+          Review them in Users →
+        </Link>
+      )}
 
       {o.usersError && (
         <div className="rounded-lg border border-notrade/25 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">

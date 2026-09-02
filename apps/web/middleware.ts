@@ -17,7 +17,10 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
  * Public routes still pass through when unconfigured, so the marketing
  * pages keep working; protected routes do not.
  */
-const PROTECTED_PREFIXES = ["/dashboard", "/admin"] as const;
+// /pending is protected too: it reports YOUR status, so it needs a session.
+// The approval gate below skips it explicitly, or a pending user would be
+// redirected to it forever.
+const PROTECTED_PREFIXES = ["/dashboard", "/admin", "/pending"] as const;
 
 function isProtected(pathname: string): boolean {
   return PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
@@ -68,6 +71,33 @@ export async function middleware(request: NextRequest) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirectedFrom", pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // Approval gate. A pending account holds a valid session, so without this
+  // it would land on the dashboard like anyone else. Deliberately a single
+  // query on the same row the admin check already needs.
+  if (isProtected(pathname) && user) {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role, access_status")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const row = profile as { role?: string; access_status?: string } | null;
+      // Admins are never held at the gate -- the console that approves
+      // people must stay reachable. Anything other than APPROVED for a
+      // non-admin waits, including a missing column on a database that
+      // has not run migration 18 yet (undefined !== 'APPROVED'), which
+      // fails closed rather than open.
+      if (row?.role !== "admin" && row?.access_status !== "APPROVED") {
+        if (pathname !== "/pending") {
+          return NextResponse.redirect(new URL("/pending", request.url));
+        }
+      }
+    } catch {
+      return NextResponse.redirect(new URL("/pending", request.url));
+    }
   }
 
   if (isAdmin && user) {

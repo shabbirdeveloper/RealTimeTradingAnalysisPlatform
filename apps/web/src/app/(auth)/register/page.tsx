@@ -55,7 +55,9 @@ export default function RegisterPage() {
         <CardHeader>
           <CardTitle>Check your email</CardTitle>
           <CardDescription>
-            We sent a confirmation link to {email}. Click it to activate your account, then log in.
+            We sent a confirmation link to {email}. Click it to activate your account, then
+            log in. Access is granted manually, so an administrator will need to approve the
+            account before signals become visible — you will see a waiting page until then.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -69,7 +71,10 @@ export default function RegisterPage() {
     <Card>
       <CardHeader>
         <CardTitle>Create your account</CardTitle>
-        <CardDescription>Start on the Free plan — upgrade any time.</CardDescription>
+        <CardDescription>
+          Accounts are approved manually — you can register now, and an administrator
+          reviews access before the dashboard opens.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form className="space-y-4" onSubmit={handleSubmit}>
