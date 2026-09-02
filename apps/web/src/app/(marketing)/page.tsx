@@ -1,11 +1,19 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DirectionBadge, GradeBadge, RegimeBadge } from "@/components/shared/badges";
 import { AnimatedNumber } from "@/components/shared/animated-number";
+import { SignalPreview } from "@/components/marketing/signal-preview";
+import { getPublicPreview, getPublicPerformance } from "@/lib/public-preview";
 import { ArrowRight, ShieldCheck, Filter, LineChart, TrendingUp, AlertTriangle } from "lucide-react";
 
-export default function LandingPage() {
+export const dynamic = "force-dynamic";
+
+export default async function LandingPage() {
+  const [preview, performance] = await Promise.all([
+    getPublicPreview(),
+    getPublicPerformance(),
+  ]);
+
   return (
     <div>
       <section className="relative overflow-hidden border-b border-border/70">
@@ -47,53 +55,90 @@ export default function LandingPage() {
             <div className="hidden h-8 w-px bg-border sm:block" />
             <Stat value={3} label="Expiries" />
             <div className="hidden h-8 w-px bg-border sm:block" />
-            <Stat value="A++" label="Highest signal grade" accent />
+            <Stat value={performance.resolved} label="Signals resolved" accent />
           </div>
         </div>
       </section>
 
       <section className="container grid grid-cols-1 gap-4 py-16 md:grid-cols-3">
-        <FeatureCard index={0} icon={Filter} title="Quality over quantity" desc="Most analysis cycles end in NO TRADE. Only setups that clear technical, regime, and meta-model filters surface as A/A+/A++." />
-        <FeatureCard index={1} icon={LineChart} title="Multi-timeframe confluence" desc="H4 macro context down to M5 entry timing — signals need alignment, not just one indicator crossing a line." />
-        <FeatureCard index={2} icon={TrendingUp} title="Verified performance, not claims" desc="Overall accuracy and A++ accuracy are tracked separately from real recorded results. No hard-coded win rates." />
+        <FeatureCard index={0} icon={Filter} title="Quality over quantity" desc="Most analysis cycles end in NO TRADE. A setup has to clear data freshness, timeframe agreement, directional separation, regime and quality before it surfaces at all." />
+        <FeatureCard index={1} icon={LineChart} title="Multi-timeframe confluence" desc="H4 macro context down to M5 entry timing. CALL and PUT are scored independently and must separate — a market that merely leans is refused." />
+        <FeatureCard index={2} icon={TrendingUp} title="Verified performance, not claims" desc="Accuracy is computed from resolved signals and published with its sample size and confidence interval — including when the answer is that it is too early to tell." />
       </section>
 
       <section className="border-y border-border bg-card/30 py-16">
-        <div className="container grid grid-cols-1 items-center gap-10 md:grid-cols-2">
-          <div>
-            <h2 className="text-2xl font-semibold text-foreground">Two outcomes look like this</h2>
-            <p className="mt-2 text-muted-foreground">Illustrative examples — not live data.</p>
+        <div className="container grid grid-cols-1 items-start gap-10 md:grid-cols-2">
+          <div className="space-y-4">
+            <h2 className="text-2xl font-semibold text-foreground">This is the engine, right now</h2>
+            <p className="text-muted-foreground">
+              Not a demo. The panel beside this reads the live decision for each asset —
+              including, most of the time, no decision at all.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              When a signal is open you will see that it exists and what quality it reached.
+              The direction and entry price stay behind the login, because that is the product.
+            </p>
+
+            <div className="space-y-3 rounded-lg border border-border bg-background/60 p-5">
+              <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+                Measured performance
+              </p>
+
+              {performance.resolved < 30 ? (
+                <>
+                  <p className="font-mono-tabular text-2xl font-semibold text-foreground">
+                    Too early to say
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {performance.resolved === 0
+                      ? "No signal has run to expiry yet."
+                      : `${performance.resolved} signals have resolved (${performance.wins}W / ${performance.losses}L).`}{" "}
+                    A win rate needs about 30 before it means anything — below that, one trade
+                    moves it ten points.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-mono-tabular text-2xl font-semibold text-foreground">
+                    {performance.accuracy}%
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+                      {performance.interval &&
+                        `${performance.interval.low.toFixed(1)}–${performance.interval.high.toFixed(1)}`}
+                    </span>
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    From {performance.resolved} resolved signals ({performance.wins}W / {performance.losses}L).
+                    The range is the 95% interval — the honest width of what this sample can show.
+                  </p>
+                  <p className="text-sm">
+                    {performance.verdict === "ABOVE_BREAK_EVEN" ? (
+                      <span className="text-call">
+                        Above the {performance.breakEven.toFixed(1)}% needed to break even at an 80% payout.
+                      </span>
+                    ) : performance.verdict === "BELOW_BREAK_EVEN" ? (
+                      <span className="text-put">
+                        Below the {performance.breakEven.toFixed(1)}% needed to break even at an 80% payout.
+                        We are not claiming this is profitable yet, because it is not.
+                      </span>
+                    ) : (
+                      <span className="text-notrade">
+                        Not yet distinguishable from the {performance.breakEven.toFixed(1)}% needed to break
+                        even at an 80% payout.
+                      </span>
+                    )}
+                  </p>
+                </>
+              )}
+
+              <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+                Every figure on this page is computed from recorded results. We publish the sample
+                size and the interval with the rate, so you can see how much it is worth. No
+                advertised accuracy, no target we have not reached.
+              </p>
+            </div>
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Card className="aplusplus-frame overflow-hidden border-aplusplus/30">
-              <div className="h-[3px] w-full bg-call" />
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold">XAU/USD</span>
-                  <RegimeBadge regime="TRENDING_UP" />
-                </div>
-                <DirectionBadge direction="CALL" />
-                <div className="flex items-end justify-between border-t border-border/70 pt-3">
-                  <div>
-                    <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Confidence</p>
-                    <p className="font-mono-tabular text-lg font-semibold">92.4%</p>
-                  </div>
-                  <GradeBadge grade="A++" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="overflow-hidden">
-              <div className="h-[3px] w-full bg-notrade/70" />
-              <CardContent className="space-y-3 p-5">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold">EUR/USD</span>
-                  <RegimeBadge regime="RANGING" />
-                </div>
-                <DirectionBadge direction="NO_TRADE" />
-                <p className="text-xs text-muted-foreground">Market conditions not strong enough.</p>
-              </CardContent>
-            </Card>
-          </div>
+
+          <SignalPreview rows={preview} />
         </div>
       </section>
 
