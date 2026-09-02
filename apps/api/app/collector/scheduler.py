@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.market_data.base import MarketDataProvider
 from app.market_data.demo_provider import DemoMarketDataProvider
 from app.market_data.twelve_data_provider import TwelveDataProvider
+from app.notifications.heartbeat import send_heartbeat
 from app.schemas.candle import Asset
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,18 @@ async def run_all_assets(*, force: bool = False) -> None:
         logger.exception("shadow resolution failed")
 
 
+async def run_daily_heartbeat() -> None:
+    """Sends the daily "collector is alive" report.
+
+    Wrapped whole: a notification failure must never look like, or become,
+    a collection failure. The report is a convenience; the candles are not.
+    """
+    try:
+        send_heartbeat()
+    except Exception:  # noqa: BLE001 -- reporting must not affect collection
+        logger.exception("daily heartbeat failed")
+
+
 def start_scheduler() -> AsyncIOScheduler:
     global _scheduler
     settings = get_settings()
@@ -126,6 +139,20 @@ def start_scheduler() -> AsyncIOScheduler:
         max_instances=1,
         coalesce=True,
     )
+    if settings.heartbeat_enabled:
+        _scheduler.add_job(
+            run_daily_heartbeat,
+            "cron",
+            hour=settings.heartbeat_hour_utc,
+            minute=0,
+            id="daily_heartbeat",
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info("daily heartbeat scheduled for %02d:00 UTC", settings.heartbeat_hour_utc)
+    elif settings.has_telegram:
+        logger.info("daily heartbeat disabled (HEARTBEAT_HOUR_UTC=-1)")
+
     _scheduler.start()
     logger.info("market data scheduler started (interval=%ss)", settings.poll_interval_seconds)
     return _scheduler

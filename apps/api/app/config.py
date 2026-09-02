@@ -63,9 +63,22 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = Field(default=None)
     telegram_chat_id: str | None = Field(default=None)
 
+    # Hour (UTC) at which the daily "collector is alive" report is sent to
+    # Telegram. This engine is built to reject most setups, so a quiet
+    # channel is the expected state -- but silence from a working system
+    # and silence from a dead one are indistinguishable, and the natural
+    # reaction to that ambiguity is to lower the quality bar until messages
+    # appear. One daily report removes the ambiguity for the price of one
+    # message a day. Set to -1 to switch it off.
+    heartbeat_hour_utc: int = Field(default=0, ge=-1, le=23)
+
     @property
     def has_telegram(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
+    def heartbeat_enabled(self) -> bool:
+        return self.heartbeat_hour_utc >= 0 and self.has_telegram
 
     @property
     def has_real_provider(self) -> bool:
