@@ -82,6 +82,32 @@ async function fetchSnapshotForAssetId(
  * RLS denial) results in every asset coming back null, so the caller can
  * render an honest "no data" state instead of the page crashing.
  */
+/**
+ * Why a snapshot is missing. "No candle has ever been stored" and "the
+ * query was refused" both produce null, and they call for opposite
+ * responses — start the collector, versus fix access. Rendering them
+ * identically is how an outage gets diagnosed as an empty database.
+ */
+export type SnapshotFailure = { reason: string } | null;
+
+export interface SnapshotResult {
+  snapshots: Record<AssetSymbol, AssetPriceSnapshot | null>;
+  failure: SnapshotFailure;
+}
+
+export async function getAssetPriceSnapshotsWithReason(): Promise<SnapshotResult> {
+  const snapshots = await getAssetPriceSnapshots();
+  let failure: SnapshotFailure = null;
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.from("candles").select("id").limit(1);
+    if (error) failure = { reason: error.message };
+  } catch (err) {
+    failure = { reason: err instanceof Error ? err.message : "Could not reach the database." };
+  }
+  return { snapshots, failure };
+}
+
 export async function getAssetPriceSnapshots(): Promise<
   Record<AssetSymbol, AssetPriceSnapshot | null>
 > {

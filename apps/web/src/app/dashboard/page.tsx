@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getRealPerformanceSummary } from "@/lib/performance";
 import { breakEvenWinRate, wilsonInterval } from "@/lib/statistics";
 import { AnimatedNumber } from "@/components/shared/animated-number";
-import { getAssetPriceSnapshots } from "@/lib/market-data";
+import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
 import { getLatestSignals } from "@/lib/signals";
 import { OtcWarning } from "@/components/shared/otc-warning";
 import type { AssetSymbol, Signal } from "@/types";
@@ -52,7 +52,11 @@ export default async function DashboardHomePage() {
     : verdict === "Losing" ? "text-put"
     : "text-muted-foreground";
 
-  const [snapshots, signals] = await Promise.all([getAssetPriceSnapshots(), getLatestSignals()]);
+  const [priceData, signals] = await Promise.all([
+    getAssetPriceSnapshotsWithReason(),
+    getLatestSignals(),
+  ]);
+  const { snapshots, failure: dataFailure } = priceData;
 
   return (
     <div className="space-y-6">
@@ -115,7 +119,7 @@ export default async function DashboardHomePage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         {ASSET_LIST.map((asset, i) => {
           const snapshot = snapshots[asset];
-          if (!snapshot) return <NoDataCard key={asset} asset={asset} index={i} />;
+          if (!snapshot) return <NoDataCard key={asset} asset={asset} index={i} failure={dataFailure} />;
 
           const realSignal = signals[asset];
           const signal: Signal = realSignal ?? {
@@ -158,7 +162,7 @@ export default async function DashboardHomePage() {
   );
 }
 
-function NoDataCard({ asset, index }: { asset: AssetSymbol; index: number }) {
+function NoDataCard({ asset, index, failure }: { asset: AssetSymbol; index: number; failure?: { reason: string } | null }) {
   const cfg = ASSET_CONFIGS[asset];
   return (
     <Card
@@ -173,10 +177,22 @@ function NoDataCard({ asset, index }: { asset: AssetSymbol; index: number }) {
         <DataStatusPill status="OFFLINE" />
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-muted-foreground">
-          No live price data yet for this asset. The market-data collector hasn&apos;t reported a candle for it —
-          check that it&apos;s running and that the Supabase migrations have been applied.
-        </p>
+        {failure ? (
+          <>
+            <p className="text-sm text-destructive">
+              Price data could not be read. This is an access or setup problem, not an empty
+              database — the candles may well be there.
+            </p>
+            <p className="mt-2 break-words font-mono-tabular text-[11px] text-muted-foreground">
+              {failure.reason}
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No candle has ever been stored for this asset. Start the market-data collector, and
+            check that the Supabase migrations have been applied.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
