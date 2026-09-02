@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # retries and restarts.
     poll_interval_seconds: int = Field(default=600, ge=30)
 
+    # Per-asset polling cadence instead of one interval for everything:
+    # forex/gold every 5 minutes while London or New York is open, every 15
+    # otherwise; crypto every 30. See collector/cadence.py for the budget
+    # arithmetic. Set to false to fall back to `poll_interval_seconds` for
+    # every asset -- the escape hatch if a provider plan changes shape.
+    adaptive_polling: bool = Field(default=True)
+
     # How many recent M5 bars to request per poll. Larger than the bare
     # minimum on purpose, so a missed poll (network hiccup, restart) still
     # self-heals on the next successful call instead of leaving a gap.

@@ -11,9 +11,16 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from app.collector.cadence import (
+    TICK_SECONDS,
+    daily_request_estimate,
+    interval_seconds,
+    should_poll,
+)
 from app.collector.market_hours import any_market_open, is_market_open
 from app.collector.resolution import resolve_expired_signals, resolve_shadow_opportunities
 from app.collector.service import run_poll_cycle
@@ -27,6 +34,11 @@ from app.schemas.candle import Asset
 logger = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
+
+# When each asset was last polled, for the per-asset cadence. In memory
+# on purpose: after a restart every asset is due immediately, which is
+# the behaviour you want -- a restart should refresh, not wait.
+_last_polled: dict[str, datetime] = {}
 
 
 def build_provider() -> MarketDataProvider:
@@ -74,6 +86,20 @@ async def run_all_assets(*, force: bool = False) -> None:
         if not force and not is_market_open(asset):
             logger.debug("%s market closed -- skipping", asset.value)
             continue
+
+        # Per-asset cadence (see collector/cadence.py). One global interval
+        # would have to be fast enough for London and cheap enough for a
+        # dead Asian session at the same time, and the provider's daily cap
+        # does not degrade gracefully when you guess wrong.
+        now = datetime.now(timezone.utc)
+        if not force and not should_poll(asset.value, now, _last_polled.get(asset.value)):
+            logger.debug(
+                "%s not due yet (every %ds right now) -- skipping",
+                asset.value, interval_seconds(asset.value, now),
+            )
+            continue
+        _last_polled[asset.value] = now
+
         try:
             await run_poll_cycle(asset, provider, poll_outputsize=settings.poll_outputsize)
         except Exception:  # noqa: BLE001 -- deliberately broad, see below
@@ -131,10 +157,11 @@ def start_scheduler() -> AsyncIOScheduler:
     global _scheduler
     settings = get_settings()
     _scheduler = AsyncIOScheduler(timezone="UTC")
+    tick = TICK_SECONDS if settings.adaptive_polling else settings.poll_interval_seconds
     _scheduler.add_job(
         run_all_assets,
         "interval",
-        seconds=settings.poll_interval_seconds,
+        seconds=tick,
         id="market_data_poll",
         max_instances=1,
         coalesce=True,
@@ -154,7 +181,15 @@ def start_scheduler() -> AsyncIOScheduler:
         logger.info("daily heartbeat disabled (HEARTBEAT_HOUR_UTC=-1)")
 
     _scheduler.start()
-    logger.info("market data scheduler started (interval=%ss)", settings.poll_interval_seconds)
+    if settings.adaptive_polling:
+        symbols = [a.value for a in Asset]
+        logger.info(
+            "market data scheduler started (tick=%ss, per-asset cadence; "
+            "~%.0f provider requests/day at this configuration)",
+            tick, daily_request_estimate(symbols),
+        )
+    else:
+        logger.info("market data scheduler started (fixed interval=%ss)", tick)
     return _scheduler
 
 
