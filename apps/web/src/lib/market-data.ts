@@ -110,19 +110,56 @@ export async function getAssetPriceSnapshotsWithReason(): Promise<SnapshotResult
     // "you may not see these rows" from "there are no rows", which is the
     // exact confusion this function exists to end. Ask about access first,
     // explicitly, and only then about content.
+    // Ask the database what IT thinks, and ask the app what it thinks, and
+    // print both. is_approved() returning false while the profiles row says
+    // APPROVED is a completely different bug from the row not being
+    // approved, and one message cannot stand for both.
     const { data: approved, error: approvalError } = await supabase.rpc("is_approved");
-    if (!approvalError && approved === false) {
+    const { data: auth } = await supabase.auth.getUser();
+    const uid = auth?.user?.id ?? null;
+
+    let rowStatus: string | null = null;
+    let rowError: string | null = null;
+    if (uid) {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("access_status, role")
+        .eq("id", uid)
+        .maybeSingle();
+      rowStatus = (profile as { access_status?: string; role?: string } | null)
+        ? `${(profile as { access_status?: string }).access_status ?? "?"} / ${(profile as { role?: string }).role ?? "?"}`
+        : null;
+      if (profileError) rowError = profileError.message;
+    }
+
+    if (approvalError) {
       failure = {
-        // The SQL comes first, not the /admin/users route. When nobody is
-        // an admin yet -- the state right after the approval gate is added
-        // -- "ask an admin" is circular advice, and it is exactly the
-        // moment someone reads this message.
         reason:
-          "Your account is not approved, so the market data policies return no rows. " +
-          "Fix it in the Supabase SQL editor: update profiles set " +
-          "access_status = 'APPROVED', role = 'admin' where id = " +
-          "(select id from auth.users where email = 'your@email'); " +
-          "Once one admin exists, further accounts can be approved from /admin/users.",
+          `The approval check itself failed: ${approvalError.message}. ` +
+          "That usually means migration 18 has not been applied to this database.",
+      };
+      return { snapshots, failure };
+    }
+
+    if (approved === false) {
+      const seen = rowStatus
+        ? `Your profile row says ${rowStatus}.`
+        : rowError
+          ? `Your profile row could not be read: ${rowError}.`
+          : "No profile row was found for your account.";
+
+      failure = {
+        reason:
+          `The database's approval check returned false for user ${uid ?? "(none)"}. ${seen} ` +
+          (rowStatus?.startsWith("APPROVED")
+            // The two disagree. Not a data problem -- the check itself is
+            // wrong, and telling the reader to approve an already-approved
+            // account would send them round the loop again.
+            ? "These disagree, so the check is at fault rather than your account. " +
+              "is_approved() is SECURITY DEFINER and calls auth.uid(); if its search_path " +
+              "does not include the auth schema, that call cannot resolve for the caller."
+            : "Fix in the Supabase SQL editor: update profiles set access_status = 'APPROVED', " +
+              "role = 'admin' where id = (select id from auth.users where email = 'your@email');"),
       };
       return { snapshots, failure };
     }
