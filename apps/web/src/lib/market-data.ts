@@ -194,26 +194,40 @@ export async function getAssetPriceSnapshots(): Promise<
     const supabase = await createClient();
     const now = new Date();
 
-    const { data: assets, error: assetsError } = await supabase
-      .from("assets")
-      .select("id, symbol")
-      .in("symbol", ASSET_LIST);
+    // One round trip, not eleven. This used to be an assets query plus two
+    // candle queries per asset, each a separate hop from Vercel to
+    // Supabase -- which is where the page's seconds were going.
+    const { data, error } = await supabase.rpc("dashboard_prices");
+    if (error || !data) return result;
 
-    if (assetsError || !assets) return result;
+    for (const row of data as Array<{
+      symbol: string;
+      latest_close: string | number | null;
+      latest_time: string | null;
+      oldest_close: string | number | null;
+    }>) {
+      const symbol = row.symbol as AssetSymbol;
+      if (!ASSET_LIST.includes(symbol) || row.latest_close === null || !row.latest_time) continue;
 
-    await Promise.all(
-      (assets as { id: string; symbol: string }[]).map(async (assetRow) => {
-        const symbol = assetRow.symbol as AssetSymbol;
-        if (!ASSET_LIST.includes(symbol)) return;
-        result[symbol] = await fetchSnapshotForAssetId(supabase, assetRow.id, symbol, now);
-      })
-    );
+      const price = Number(row.latest_close);
+      const baseline = row.oldest_close === null ? price : Number(row.oldest_close);
+      const lastCandleTime = new Date(row.latest_time);
+
+      result[symbol] = {
+        asset: symbol,
+        price,
+        change24hPct: baseline !== 0 ? ((price - baseline) / baseline) * 100 : 0,
+        dataStatus: classifyDataStatus(lastCandleTime, now),
+        lastUpdated: lastCandleTime.toISOString(),
+      };
+    }
   } catch {
     // Leave everything null -- see docstring above.
   }
 
   return result;
 }
+
 
 /**
  * Same as getAssetPriceSnapshots() but for a single asset -- used by

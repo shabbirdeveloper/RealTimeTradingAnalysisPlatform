@@ -32,32 +32,32 @@ export async function getLatestSignals(): Promise<Record<AssetSymbol, Signal | n
   try {
     const supabase = await createClient();
 
-    const { data: assets, error: assetsError } = await supabase
-      .from("assets")
-      .select("id, symbol")
-      .in("symbol", ASSET_LIST);
+    // One query, not one per asset plus a lookup. This was six round trips
+    // from Vercel to Supabase for five rows; the join comes back with the
+    // symbol so the asset table is not fetched separately, and the first
+    // row seen per symbol is the newest because of the ORDER BY.
+    //
+    // A modest limit is enough: even at five assets it only has to reach
+    // back far enough to see each symbol once, and the
+    // (asset_id, last_evaluated_at desc) index added in migration 23 makes
+    // that ordering cheap.
+    const { data, error } = await supabase
+      .from("signals")
+      .select(
+        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot, assets!inner(symbol)"
+      )
+      .order("last_evaluated_at", { ascending: false, nullsFirst: false })
+      .limit(200);
 
-    if (assetsError || !assets) return result;
+    if (error || !data) return result;
 
-    await Promise.all(
-      (assets as { id: string; symbol: string }[]).map(async (assetRow) => {
-        const symbol = assetRow.symbol as AssetSymbol;
-        if (!ASSET_LIST.includes(symbol)) return;
-
-        const { data } = await supabase
-          .from("signals")
-          .select(
-            "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot"
-          )
-          .eq("asset_id", assetRow.id)
-          .order("last_evaluated_at", { ascending: false, nullsFirst: false })
-          .limit(1);
-
-        const row = data?.[0] as SignalRow | undefined;
-        if (!row) return;
-        result[symbol] = shapeSignal(symbol, row);
-      })
-    );
+    for (const raw of data as Array<SignalRow & { assets: { symbol: string } | { symbol: string }[] }>) {
+      const assetRow = Array.isArray(raw.assets) ? raw.assets[0] : raw.assets;
+      const symbol = assetRow?.symbol as AssetSymbol | undefined;
+      if (!symbol || !ASSET_LIST.includes(symbol)) continue;
+      if (result[symbol]) continue; // already have this asset's newest
+      result[symbol] = shapeSignal(symbol, raw);
+    }
   } catch {
     // Leave everything null -- see docstring above.
   }

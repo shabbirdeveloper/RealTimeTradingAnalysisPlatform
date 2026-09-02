@@ -2,7 +2,7 @@ import { ASSET_LIST, ASSET_CONFIGS } from "@/data/assets";
 import { AssetSignalCard } from "@/components/dashboard/asset-signal-card";
 import { DataStatusPill } from "@/components/shared/badges";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { getRealPerformanceSummary } from "@/lib/performance";
+import { getPerformanceCounts } from "@/lib/performance";
 import { breakEvenWinRate, wilsonInterval } from "@/lib/statistics";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
@@ -30,7 +30,9 @@ export const dynamic = "force-dynamic"; // always read the latest price + signal
  * answer and the correct one on day one.
  */
 export default async function DashboardHomePage() {
-  const summary = await getRealPerformanceSummary();
+  // Counted in SQL. The full breakdown lives on /dashboard/performance,
+  // which is where the cost of fetching every resolved row belongs.
+  const summary = await getPerformanceCounts();
   const wins = summary?.wins ?? 0;
   const losses = summary?.losses ?? 0;
   const decided = wins + losses;

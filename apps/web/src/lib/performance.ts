@@ -192,3 +192,38 @@ export async function getRealPerformanceSummary(): Promise<PerformanceSummary | 
     return null;
   }
 }
+
+export interface PerformanceCounts {
+  wins: number;
+  losses: number;
+  draws: number;
+  aPlusPlusWins: number;
+  aPlusPlusDecided: number;
+}
+
+/**
+ * Just the tallies, counted in SQL.
+ *
+ * getRealPerformanceSummary() fetches up to 5,000 resolved rows because
+ * the performance PAGE needs the per-session, per-regime and per-bucket
+ * breakdowns. The dashboard home needs four numbers, and paying for five
+ * thousand rows to get them was most of that page's load time.
+ */
+export async function getPerformanceCounts(): Promise<PerformanceCounts | null> {
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("performance_counts");
+    if (error || !data) return null;
+    const row = (data as Array<Record<string, unknown>>)[0];
+    if (!row) return { wins: 0, losses: 0, draws: 0, aPlusPlusWins: 0, aPlusPlusDecided: 0 };
+    return {
+      wins: Number(row.wins ?? 0),
+      losses: Number(row.losses ?? 0),
+      draws: Number(row.draws ?? 0),
+      aPlusPlusWins: Number(row.aplusplus_wins ?? 0),
+      aPlusPlusDecided: Number(row.aplusplus_decided ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
