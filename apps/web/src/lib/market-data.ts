@@ -113,10 +113,16 @@ export async function getAssetPriceSnapshotsWithReason(): Promise<SnapshotResult
     const { data: approved, error: approvalError } = await supabase.rpc("is_approved");
     if (!approvalError && approved === false) {
       failure = {
+        // The SQL comes first, not the /admin/users route. When nobody is
+        // an admin yet -- the state right after the approval gate is added
+        // -- "ask an admin" is circular advice, and it is exactly the
+        // moment someone reads this message.
         reason:
           "Your account is not approved, so the market data policies return no rows. " +
-          "An admin can approve it in /admin/users, or set access_status = 'APPROVED' " +
-          "on your profiles row.",
+          "Fix it in the Supabase SQL editor: update profiles set " +
+          "access_status = 'APPROVED', role = 'admin' where id = " +
+          "(select id from auth.users where email = 'your@email'); " +
+          "Once one admin exists, further accounts can be approved from /admin/users.",
       };
       return { snapshots, failure };
     }
