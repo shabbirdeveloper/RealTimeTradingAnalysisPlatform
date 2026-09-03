@@ -29,7 +29,7 @@ class StubFeed(DerivSyntheticFeed):
     """Replaces only the transport, so every rule above it is exercised."""
 
     def __init__(self, response: dict) -> None:
-        super().__init__(app_id="test")
+        super().__init__(app_id="1089")
         self.response = response
         self.sent: dict | None = None
 
@@ -67,13 +67,13 @@ class ConfigurationTests(unittest.TestCase):
     def test_the_descriptor_names_the_broker(self):
         """The provenance check compares against this. A feed that
         misreported it would defeat every downstream guarantee."""
-        d = DerivSyntheticFeed(app_id="1").descriptor
+        d = DerivSyntheticFeed(app_id="1089").descriptor
         self.assertEqual(d.kind, FeedKind.BROKER_OTC)
         self.assertEqual(d.broker, "DERIV")
 
     def test_history_is_declared_stable(self):
         """The backtester's validity rests on closed bars not changing."""
-        self.assertTrue(DerivSyntheticFeed(app_id="1").history_is_stable)
+        self.assertTrue(DerivSyntheticFeed(app_id="1089").history_is_stable)
 
     def test_every_mapped_granularity_is_one_the_api_accepts(self):
         for tf, g in TIMEFRAME_GRANULARITY.items():
@@ -179,3 +179,26 @@ class TickCandleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CredentialGuardTests(unittest.TestCase):
+    """An app_id identifies the APPLICATION. An API token authorises actions
+    on an ACCOUNT, and Deriv's token page is easier to find than its app
+    registration -- so pasting a token here is the obvious mistake."""
+
+    def test_an_api_token_is_refused_not_quietly_used(self):
+        token = "a1b2C3d4E5f6G7h8i9J0kLmNoPqRsTuVecd9"
+        with self.assertRaises(ValueError) as ctx:
+            DerivSyntheticFeed(app_id=token)
+        message = str(ctx.exception)
+        self.assertIn("token", message.lower())
+        # The refusal must say what to do instead, or it just blocks someone.
+        self.assertIn("register", message.lower())
+
+    def test_a_numeric_app_id_is_accepted(self):
+        self.assertEqual(DerivSyntheticFeed(app_id=" 1089 ").app_id, "1089")
+
+    def test_the_url_carries_the_app_id_and_no_secret(self):
+        url = DerivSyntheticFeed(app_id="1089").url
+        self.assertIn("app_id=1089", url)
+        self.assertNotIn("token", url.lower())

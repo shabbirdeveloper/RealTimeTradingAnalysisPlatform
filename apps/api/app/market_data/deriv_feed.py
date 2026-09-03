@@ -86,9 +86,29 @@ class DerivSyntheticFeed(OTCFeed):
         if not app_id:
             raise ValueError(
                 "Deriv requires an app_id even for public market data. "
-                "Register one at https://api.deriv.com and set DERIV_APP_ID."
+                "Register an APPLICATION at https://api.deriv.com and set DERIV_APP_ID."
             )
-        self.app_id = str(app_id)
+        # An app_id is a small integer that identifies the application. An
+        # API TOKEN is a long secret that authorises actions on an ACCOUNT,
+        # and Deriv's token page is the easier of the two to find -- so
+        # pasting one here is the obvious mistake, and it must not be a
+        # quiet one.
+        #
+        # It matters more than a wrong-value error usually would. A token
+        # can carry the `trade` scope, and this platform's central promise
+        # is that it never places a trade. A trading credential sitting in
+        # its configuration is one careless commit away from the
+        # auto-execution path the spec forbids -- so refuse it at the door,
+        # rather than letting it sit unused and available.
+        text = str(app_id).strip()
+        if not text.isdigit():
+            raise ValueError(
+                f"DERIV_APP_ID must be the numeric app id, not {'a token' if len(text) > 12 else 'this'}. "
+                "Market data needs NO account token — if what you have is a long "
+                "secret from the API-token page, delete it (especially if it has the "
+                "Trade scope) and register an application instead, which yields a number."
+            )
+        self.app_id = text
         self.timeout_seconds = timeout_seconds
 
     def _now(self) -> datetime:
