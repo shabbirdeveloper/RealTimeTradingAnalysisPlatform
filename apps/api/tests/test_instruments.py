@@ -143,12 +143,35 @@ class RegistryShape(unittest.TestCase):
         self.assertTrue(trades_continuously("EURUSD_OTC"))
         self.assertFalse(trades_continuously("EURUSD"))
 
-    def test_registry_is_still_narrow(self):
-        """Phase 30: start with one OTC instrument. Five pairs each reach a
-        conclusion five times slower, and 'no pair ever reached significance'
-        is the usual result of widening early. Raise this deliberately."""
-        otc = [i for i in REGISTRY.values() if i.is_otc]
-        self.assertLessEqual(len(otc), 3, "widen OTC coverage only once one pair has a sample size")
+    def test_collectable_otc_coverage_is_still_narrow(self):
+        """Start narrow. Five instruments each reach a conclusion five times
+        slower, and 'no instrument ever reached significance' is the usual
+        result of widening early. Raise this deliberately.
+
+        Counted PER BROKER, and only for brokers that can actually be
+        collected. The Quotex entry has no feed and never will, so counting
+        it against the budget would penalise a symbol that produces no data
+        and consumes no requests."""
+        collectable = [
+            i for i in REGISTRY.values() if i.is_otc and i.broker != "QUOTEX"
+        ]
+        by_broker: dict[str, int] = {}
+        for instrument in collectable:
+            by_broker[instrument.broker or "?"] = by_broker.get(instrument.broker or "?", 0) + 1
+
+        for broker, count in by_broker.items():
+            self.assertLessEqual(
+                count, 3,
+                f"widen {broker} coverage only once one instrument has a sample size",
+            )
+
+    def test_the_quotex_instrument_stays_unpriceable(self):
+        """It is kept in the registry so the provenance check has something
+        to refuse, and so the reason is recorded where someone looking for
+        it will find it. It must never acquire a feed."""
+        quotex = REGISTRY["EURUSD_OTC"]
+        self.assertEqual(quotex.broker, "QUOTEX")
+        self.assertTrue(quotex.is_otc)
 
 
 class InstrumentDefaults(unittest.TestCase):

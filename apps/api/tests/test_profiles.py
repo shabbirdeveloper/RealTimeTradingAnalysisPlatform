@@ -21,7 +21,7 @@ def otc_history(ending_at=None, drift=0.00004) -> dict:
     the entire point -- this could not be expressed at all while every
     duration was an integer number of minutes."""
     ending_at = ending_at or datetime.now(timezone.utc)
-    steps = {"M5": 5, "M1": 1, "S30": 0.5, "S15": 0.25}
+    steps = {"M15": 15, "M5": 5, "M3": 3, "M1": 1}
     return {
         tf: make_candles(300, 1.1000, drift * mins, mins, ending_at=ending_at)
         for tf, mins in steps.items()
@@ -35,18 +35,40 @@ class ProfilesDescribeTheirInstrument(unittest.TestCase):
         self.assertEqual(p.entry_timeframe, "M5")
         self.assertEqual(p.expiries_seconds, (900, 1800, 3600))
 
-    def test_otc_reasons_in_minutes_and_expires_in_seconds(self):
-        p = get_instrument("EURUSD_OTC").profile
-        self.assertEqual(p.timeframes, ("M5", "M1", "S30", "S15"))
-        self.assertEqual(p.entry_timeframe, "S15")
-        self.assertTrue(all(e <= 180 for e in p.expiries_seconds))
+    def test_otc_reads_faster_and_expires_sooner_than_a_real_market(self):
+        """The values will move as the feed improves -- S15/S30 return once
+        ticks are collected -- so assert the RELATIONSHIP, which is the part
+        that must hold whatever the ladder is."""
+        otc = get_instrument("DERIV_V75").profile
+        real = get_instrument("EURUSD").profile
+        self.assertLess(max(otc.expiries_seconds), min(real.expiries_seconds))
+        self.assertLess(otc.max_data_age_seconds, real.max_data_age_seconds)
+
+    def test_otc_ladder_runs_slowest_to_fastest(self):
+        from app.backtesting.replay import TIMEFRAME_SECONDS
+
+        p = get_instrument("DERIV_V75").profile
+        durations = [TIMEFRAME_SECONDS[tf] for tf in p.timeframes]
+        self.assertEqual(durations, sorted(durations, reverse=True))
+
+    def test_otc_primary_horizon_is_five_minutes(self):
+        self.assertIn(300, get_instrument("DERIV_V75").profile.expiries_seconds)
 
     def test_staleness_limit_scales_with_the_entry_timeframe(self):
         """15 minutes of staleness is a minor gap on M5 and an eternity on
-        S15. A single global limit would make the OTC gate useless."""
+        M1. A single global limit would make the OTC gate useless.
+
+        Asserted as a multiple of the entry bar rather than a fixed number,
+        so retargeting the ladder cannot silently leave the gate calibrated
+        for a timeframe that is no longer there."""
+        from app.backtesting.replay import TIMEFRAME_SECONDS
+
+        for profile in (PUBLIC_MARKET_PROFILE, OTC_PROFILE):
+            entry = TIMEFRAME_SECONDS[profile.entry_timeframe]
+            self.assertEqual(profile.max_data_age_seconds, entry * 3)
         self.assertGreater(
             PUBLIC_MARKET_PROFILE.max_data_age_seconds,
-            OTC_PROFILE.max_data_age_seconds * 10,
+            OTC_PROFILE.max_data_age_seconds,
         )
 
     def test_entry_timeframe_must_be_the_fastest_rung(self):
@@ -71,12 +93,16 @@ class ExpiryWeighting(unittest.TestCase):
     five second-scale horizons would all have scored identically."""
 
     def test_shortest_expiry_leans_on_the_fastest_timeframe(self):
-        w = {tf: _expiry_weight(15, tf, OTC_PROFILE) for tf in OTC_PROFILE.timeframes}
-        self.assertGreater(w["S15"], w["M5"])
+        fastest, slowest = OTC_PROFILE.timeframes[-1], OTC_PROFILE.timeframes[0]
+        shortest = min(OTC_PROFILE.expiries_seconds)
+        w = {tf: _expiry_weight(shortest, tf, OTC_PROFILE) for tf in OTC_PROFILE.timeframes}
+        self.assertGreater(w[fastest], w[slowest])
 
     def test_longest_expiry_leans_on_the_slowest_timeframe(self):
-        w = {tf: _expiry_weight(180, tf, OTC_PROFILE) for tf in OTC_PROFILE.timeframes}
-        self.assertGreater(w["M5"], w["S15"])
+        fastest, slowest = OTC_PROFILE.timeframes[-1], OTC_PROFILE.timeframes[0]
+        longest = max(OTC_PROFILE.expiries_seconds)
+        w = {tf: _expiry_weight(longest, tf, OTC_PROFILE) for tf in OTC_PROFILE.timeframes}
+        self.assertGreater(w[slowest], w[fastest])
 
     def test_the_extremes_match_the_historical_real_market_table(self):
         """The hand-tuned table's endpoints were 0.6 and 1.4. The computed

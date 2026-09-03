@@ -49,6 +49,19 @@ class Settings(BaseSettings):
     # every asset -- the escape hatch if a provider plan changes shape.
     adaptive_polling: bool = Field(default=True)
 
+    # Deriv synthetic indices -- broker-generated instruments that trade
+    # 24/7, through a documented public API. Only an app_id is needed;
+    # market data requires no account token, so nothing secret lives here.
+    # Register one at https://api.deriv.com.
+    #
+    # Unset means the OTC side stays dark, which is the correct default:
+    # the engine refuses to price a broker instrument with no broker feed
+    # rather than substituting a real-market pair of a similar name.
+    deriv_app_id: str | None = Field(default=None)
+    # Which registry symbols to collect. Start with one; more instruments
+    # multiply the request budget and dilute the sample each is measured on.
+    deriv_symbols: str = Field(default="DERIV_V75")
+
     # How many recent M5 bars to request per poll. Larger than the bare
     # minimum on purpose, so a missed poll (network hiccup, restart) still
     # self-heals on the next successful call instead of leaving a gap.
@@ -86,6 +99,14 @@ class Settings(BaseSettings):
     @property
     def heartbeat_enabled(self) -> bool:
         return self.heartbeat_hour_utc >= 0 and self.has_telegram
+
+    @property
+    def has_deriv(self) -> bool:
+        return bool(self.deriv_app_id)
+
+    @property
+    def deriv_symbol_list(self) -> list[str]:
+        return [s.strip().upper() for s in self.deriv_symbols.split(",") if s.strip()]
 
     @property
     def has_real_provider(self) -> bool:

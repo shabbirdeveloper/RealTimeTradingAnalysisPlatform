@@ -136,11 +136,26 @@ PUBLIC_MARKET_PROFILE = TradingProfile(
 # settlement the close of the next, so no confirmation is possible in
 # between. It is a candidate, not a recommendation, and the strategy config
 # can disable it per instrument.
+# Retargeted to a 5-minute primary expiry, and to timeframes a real feed
+# can actually supply.
+#
+# The previous ladder ran M5/M1/S30/S15 with 15-180s expiries, written
+# against a hypothetical tick feed. Deriv's finest CANDLE is 60 seconds, so
+# S15 and S30 have to be built from its tick stream
+# (deriv_feed.ticks_to_candles). That pipeline is worth having and is not
+# built yet, and shipping a profile whose entry timeframe cannot be filled
+# would mean an engine that refuses every cycle on missing history and
+# looks broken rather than unfinished.
+#
+# So the ladder is M15 context down to M1 entry, all directly available,
+# with 300s as the primary horizon. Adding S30 and S15 back is a change to
+# these two tuples once ticks are being collected -- nothing downstream
+# depends on the names.
 OTC_PROFILE = TradingProfile(
-    timeframes=("M5", "M1", "S30", "S15"),
-    entry_timeframe="S15",
-    expiries_seconds=(15, 30, 60, 120, 180),
-    max_data_age_seconds=45,  # three closed S15 bars
+    timeframes=("M15", "M5", "M3", "M1"),
+    entry_timeframe="M1",
+    expiries_seconds=(60, 180, 300, 600),
+    max_data_age_seconds=180,  # three closed M1 bars
 )
 
 
@@ -186,6 +201,10 @@ REGISTRY: dict[str, Instrument] = {
     "GBPUSD": Instrument("GBPUSD", "GBP/USD", MarketType.FOREX),
     "BTCUSD": Instrument("BTCUSD", "BTC/USD", MarketType.CRYPTO, trades_continuously=True),
     "ETHUSD": Instrument("ETHUSD", "ETH/USD", MarketType.CRYPTO, trades_continuously=True),
+    # Kept, and kept unreachable. Quotex publishes no market-data API, so
+    # nothing can legitimately price this. It stays in the registry so the
+    # provenance check has something to refuse rather than an unknown
+    # symbol, and so the reason is recorded where someone will find it.
     "EURUSD_OTC": Instrument(
         "EURUSD_OTC",
         "EUR/USD (OTC)",
@@ -193,7 +212,49 @@ REGISTRY: dict[str, Instrument] = {
         broker="QUOTEX",
         trades_continuously=True,
     ),
+
+    # Deriv synthetic indices: broker-generated, 24/7, and available through
+    # a documented public API that needs no account credentials.
+    #
+    # The number in each name is that index's nominal annualised volatility,
+    # which is the whole basis for choosing between them: V25 and V100 are
+    # the same generator at very different speeds, so a strategy tuned on one
+    # has no claim on the other. They are separate instruments here for the
+    # same reason XAUUSD and EURUSD are.
+    "DERIV_V25": Instrument(
+        "DERIV_V25", "Volatility 25", MarketType.BROKER_OTC,
+        broker="DERIV", trades_continuously=True,
+    ),
+    "DERIV_V50": Instrument(
+        "DERIV_V50", "Volatility 50", MarketType.BROKER_OTC,
+        broker="DERIV", trades_continuously=True,
+    ),
+    "DERIV_V75": Instrument(
+        "DERIV_V75", "Volatility 75", MarketType.BROKER_OTC,
+        broker="DERIV", trades_continuously=True,
+    ),
 }
+
+# Our registry symbol to the code Deriv's API expects. Kept as an explicit
+# map rather than a string transformation: a rule that happens to work for
+# today's three names would silently mis-address the first instrument that
+# does not fit the pattern, and mis-addressing an instrument is how a
+# strategy ends up validated against the wrong series.
+DERIV_API_SYMBOLS: dict[str, str] = {
+    "DERIV_V25": "R_25",
+    "DERIV_V50": "R_50",
+    "DERIV_V75": "R_75",
+}
+
+
+def deriv_api_symbol(symbol: str) -> str:
+    try:
+        return DERIV_API_SYMBOLS[symbol]
+    except KeyError:
+        raise KeyError(
+            f"{symbol!r} is not a Deriv instrument. Add it to DERIV_API_SYMBOLS "
+            "with the code Deriv's API uses, and to REGISTRY with broker='DERIV'."
+        ) from None
 
 
 class UnknownInstrumentError(KeyError):
