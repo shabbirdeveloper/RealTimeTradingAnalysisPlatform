@@ -40,7 +40,7 @@ from app.features.decision_identity import fingerprint as _fingerprint
 from app.features.decision_identity import primary_note as _primary_note
 from app.features.signal_engine import SignalDecision
 from app.schemas.candle import Asset
-from app.storage.candle_repository import _asset_id_map
+from app.storage.candle_repository import _asset_id_map, asset_id_for_symbol
 from app.storage.supabase_client import get_service_client
 
 
@@ -112,8 +112,19 @@ class SignalWrite:
     status: str
 
 
-def insert_signal(asset: Asset, decision: SignalDecision) -> SignalWrite:
-    asset_id = _asset_id_map()[asset]
+def insert_signal(asset: Asset | str, decision: SignalDecision) -> SignalWrite:
+    """`asset` accepts a symbol string as well as an Asset member.
+
+    Broker-OTC instruments are deliberately absent from the Asset enum --
+    that enum drives the public-market collector loop, and an OTC symbol in
+    it could be swept into a cycle that would price it from a public feed.
+    So their signals arrive here as plain symbols, and the id is resolved by
+    symbol rather than through the enum's map.
+    """
+    symbol = asset.value if isinstance(asset, Asset) else str(asset)
+    asset_id = (
+        _asset_id_map()[asset] if isinstance(asset, Asset) else asset_id_for_symbol(symbol)
+    )
     client = get_service_client()
 
     generated_at = decision.generated_at.astimezone(timezone.utc)

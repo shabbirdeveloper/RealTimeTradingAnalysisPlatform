@@ -138,3 +138,94 @@ def fetch_first_candle_at_or_after(
     )
     return candle, row["source"]
 
+
+
+# ---------------------------------------------------------------------------
+# Broker-OTC storage
+#
+# Keyed by SYMBOL rather than by the Asset enum, on purpose. That enum drives
+# the public-market collector loop, and OTC symbols are deliberately absent
+# from it so a broker instrument can never be swept into a cycle that would
+# price it from a public feed. Reusing it here would undo that.
+# ---------------------------------------------------------------------------
+
+
+@lru_cache
+def asset_id_for_symbol(symbol: str) -> str:
+    client = get_service_client()
+    rows = (
+        client.table("assets").select("id, symbol").eq("symbol", symbol).limit(1).execute().data
+    ) or []
+    if not rows:
+        raise RuntimeError(
+            f"assets table has no row for {symbol!r}. Broker-OTC instruments are "
+            "seeded by migration; run it before collecting them."
+        )
+    return rows[0]["id"]
+
+
+def upsert_otc_candles(
+    symbol: str,
+    timeframe: str,
+    bars: list[dict],
+    *,
+    source: str,
+) -> int:
+    """Stores closed broker-OTC bars.
+
+    `feed_kind` is written on every row. It is what lets a later reader prove
+    a bar came from the broker's own generator rather than from a public
+    market -- the check that stops a real EUR/USD candle ever being scored
+    against a broker instrument of a similar name.
+    """
+    if not bars:
+        return 0
+
+    asset_id = asset_id_for_symbol(symbol)
+    rows = [
+        {
+            "asset_id": asset_id,
+            "timeframe": timeframe,
+            "open_time": bar["open_time"].astimezone(timezone.utc).isoformat(),
+            "open": str(bar["open"]),
+            "high": str(bar["high"]),
+            "low": str(bar["low"]),
+            "close": str(bar["close"]),
+            "volume": None,
+            "source": source,
+            "feed_kind": "BROKER_OTC",
+        }
+        for bar in bars
+    ]
+    get_service_client().table("candles").upsert(
+        rows, on_conflict="asset_id,timeframe,open_time"
+    ).execute()
+    return len(rows)
+
+
+def fetch_recent_otc_candles(symbol: str, timeframe: str, limit: int) -> list[dict]:
+    """Most recent stored OTC bars, oldest-first, as plain dicts — the shape
+    the feature engine and replay slicer already take."""
+    asset_id = asset_id_for_symbol(symbol)
+    rows = (
+        get_service_client().table("candles")
+        .select("open_time, open, high, low, close")
+        .eq("asset_id", asset_id)
+        .eq("timeframe", timeframe)
+        .order("open_time", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+    ) or []
+    out = [
+        {
+            "open_time": datetime.fromisoformat(r["open_time"].replace("Z", "+00:00")),
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+        }
+        for r in rows
+    ]
+    out.reverse()  # oldest-first, which everything downstream assumes
+    return out

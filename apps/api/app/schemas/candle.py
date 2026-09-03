@@ -39,6 +39,20 @@ def is_crypto(asset: Asset) -> bool:
 
 
 class Timeframe(str, Enum):
+    """Declared fastest-first so the member order equals ascending duration,
+    matching the database enum (migration 16 inserted the sub-minute values
+    BEFORE 'M5' for the same reason). A value appended out of order sorts
+    after H4 in Postgres and quietly breaks anything ordering by timeframe.
+
+    The sub-minute members exist for broker-OTC instruments. No public
+    market-data vendor sells them -- Twelve Data's floor is one minute -- so
+    in practice they only ever arrive from a tick feed.
+    """
+
+    S15 = "S15"
+    S30 = "S30"
+    M1 = "M1"
+    M3 = "M3"
     M5 = "M5"
     M15 = "M15"
     H1 = "H1"

@@ -63,6 +63,26 @@ TIMEFRAME_GRANULARITY: dict[str, int] = {
 # Deriv caps a single ticks_history response.
 MAX_COUNT = 5000
 
+# ---------------------------------------------------------------------------
+# The collection plan: which rungs come from candles, which are built from
+# ticks. Stated here rather than in the collector because it is a property
+# of this FEED -- 60 seconds is Deriv's floor, not a choice the collector
+# made -- and because the two sets must partition the ladder between them.
+# ---------------------------------------------------------------------------
+
+CANDLE_TIMEFRAMES = ("M15", "M5", "M3", "M1")
+TICK_TIMEFRAMES: dict[str, int] = {"S30": 30, "S15": 15}
+
+# Bars kept per timeframe. 260 is what EMA200 plus a swing lookback needs;
+# fewer means the slowest indicator never warms up and every cycle reports
+# insufficient history, which reads as a broken engine rather than a young one.
+HISTORY_BARS = 260
+
+# Sub-minute bars are built from ticks, so the tick request must cover
+# enough time. R_75 prints roughly one tick every two seconds, so 5000 ticks
+# is a few hours -- comfortably more than 260 fifteen-second bars.
+TICK_COUNT = 5000
+
 
 class DerivError(MarketDataError):
     """The API answered, and said no. Carries Deriv's own error code so a
