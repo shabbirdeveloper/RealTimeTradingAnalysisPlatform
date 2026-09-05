@@ -218,8 +218,20 @@ export async function getLastEvaluationTimes(): Promise<Record<string, string>> 
  * real-market results. Two functions make mixing them a deliberate act; one
  * function with a list parameter makes it a typo.
  */
-export async function getLatestOtcSignals(): Promise<Record<string, Signal | null>> {
-  const result: Record<string, Signal | null> = Object.fromEntries(
+export interface OtcSignalsResult {
+  signals: Record<string, Signal | null>;
+  /**
+   * Why the set is empty, when it is. Four different situations produce
+   * "no cards", and they need four different responses -- instruments not
+   * seeded, collector not running, decisions hidden by row-level security,
+   * or the query refused outright. Rendering them identically is the bug
+   * this session has now hit five times.
+   */
+  emptyReason: string | null;
+}
+
+export async function getLatestOtcSignals(): Promise<OtcSignalsResult> {
+  const signals: Record<string, Signal | null> = Object.fromEntries(
     OTC_ASSET_LIST.map((a) => [a, null])
   );
 
@@ -228,25 +240,59 @@ export async function getLatestOtcSignals(): Promise<Record<string, Signal | nul
     const { data, error } = await supabase
       .from("signals")
       .select(
-        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot, assets!inner(symbol, market_type)"
+        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot, assets!inner(symbol)"
       )
+      .in("assets.symbol", OTC_ASSET_LIST)
       .order("last_evaluated_at", { ascending: false, nullsFirst: false })
-      .limit(200);
+      .limit(60);
 
-    if (error || !data) return result;
+    if (error) return { signals, emptyReason: `Signals could not be read: ${error.message}` };
 
-    for (const raw of data as Array<
+    for (const raw of (data ?? []) as Array<
       SignalRow & { assets: { symbol: string } | { symbol: string }[] }
     >) {
       const assetRow = Array.isArray(raw.assets) ? raw.assets[0] : raw.assets;
       const symbol = assetRow?.symbol;
-      if (!symbol || !(symbol in result)) continue;
-      if (result[symbol]) continue; // already have this instrument's newest
-      result[symbol] = shapeSignal(symbol as AssetSymbol, raw);
+      if (!symbol || !(symbol in signals)) continue;
+      if (signals[symbol]) continue; // already have this instrument's newest
+      signals[symbol] = shapeSignal(symbol as AssetSymbol, raw);
     }
-  } catch {
-    // Leave everything null -- an honest empty state, never a fabricated one.
-  }
 
-  return result;
+    if (Object.values(signals).some((v) => v !== null)) {
+      return { signals, emptyReason: null };
+    }
+
+    // Nothing visible. Narrow it down, because "no data" is the least
+    // useful thing this panel could say.
+    const { data: assetRows, error: assetError } = await supabase
+      .from("assets")
+      .select("symbol")
+      .in("symbol", OTC_ASSET_LIST);
+
+    if (assetError) {
+      return { signals, emptyReason: `The assets table could not be read: ${assetError.message}` };
+    }
+    if (!assetRows || assetRows.length === 0) {
+      return {
+        signals,
+        emptyReason:
+          "These instruments are not in the assets table yet — run migration 24 " +
+          "(20260903000024_seed_deriv_instruments.sql) in the Supabase SQL editor.",
+      };
+    }
+
+    return {
+      signals,
+      emptyReason:
+        "The instruments are configured, but no decision is visible. Either the " +
+        "collector has not run a cycle yet, or every decision so far was a rejected " +
+        "setup — those are admin-only by design (spec section 30), so a non-admin " +
+        "account sees nothing until the engine records a plain NO_TRADE or a signal.",
+    };
+  } catch (err) {
+    return {
+      signals,
+      emptyReason: err instanceof Error ? err.message : "Could not reach the database.",
+    };
+  }
 }

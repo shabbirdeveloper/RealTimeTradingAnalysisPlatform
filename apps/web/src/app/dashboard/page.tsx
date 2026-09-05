@@ -166,7 +166,7 @@ export default async function DashboardHomePage() {
         })}
       </div>
 
-      <OtcSection signals={otcSignals} />
+      <OtcSection signals={otcSignals.signals} emptyReason={otcSignals.emptyReason} />
     </div>
   );
 }

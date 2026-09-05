@@ -16,7 +16,13 @@ import { Radio } from "lucide-react";
  * about the other. Rendering them in one grid would put that mistake one
  * glance away, and the totals above would quietly include both.
  */
-export function OtcSection({ signals }: { signals: Record<string, Signal | null> }) {
+export function OtcSection({
+  signals,
+  emptyReason,
+}: {
+  signals: Record<string, Signal | null>;
+  emptyReason?: string | null;
+}) {
   const present = OTC_ASSET_LIST.filter((symbol) => signals[symbol]);
 
   return (
@@ -42,10 +48,9 @@ export function OtcSection({ signals }: { signals: Record<string, Signal | null>
 
       {present.length === 0 ? (
         <Card className="border-dashed">
-          <CardContent className="p-5 text-sm text-muted-foreground">
-            No decision recorded yet for these instruments. The collector stores one
-            per minute once <code className="font-mono-tabular text-xs">DERIV_APP_ID</code> is
-            set and migration 24 has seeded them.
+          <CardContent className="space-y-2 p-5 text-sm text-muted-foreground">
+            <p>No decision is visible for these instruments yet.</p>
+            {emptyReason && <p className="text-foreground">{emptyReason}</p>}
           </CardContent>
         </Card>
       ) : (
