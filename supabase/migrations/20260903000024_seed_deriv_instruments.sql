@@ -12,6 +12,10 @@
 -- actually be priced. Setting a symbol active while nothing can price it is
 -- how an instrument ends up looking broken rather than unavailable.
 --
+-- The per-asset column is `config`, not `metadata` -- migration 16's own
+-- seed of EURUSD_OTC uses it, and copying that row would have been the
+-- reliable way to get this right.
+--
 -- The number in each name is that index's nominal annualised volatility.
 -- V25 and V75 are the same generator at very different speeds, so they are
 -- separate instruments for the same reason XAUUSD and EURUSD are: a
@@ -19,7 +23,7 @@
 -- results would credit an edge to a series that never produced it.
 -- ============================================================================
 
-insert into assets (symbol, display_name, short_name, pip_decimal, market_type, broker, trades_continuously, metadata, is_active)
+insert into assets (symbol, display_name, short_name, pip_decimal, market_type, broker, trades_continuously, config, is_active)
 values
   ('DERIV_V25', 'Volatility 25', 'V25', 4, 'BROKER_OTC', 'DERIV', true, '{}'::jsonb, true),
   ('DERIV_V50', 'Volatility 50', 'V50', 4, 'BROKER_OTC', 'DERIV', true, '{}'::jsonb, true),
