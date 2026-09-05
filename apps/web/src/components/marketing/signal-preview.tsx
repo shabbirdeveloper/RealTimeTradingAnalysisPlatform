@@ -6,7 +6,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn, formatExpiry, formatRelative, isCheckStale } from "@/lib/utils";
 import type { PreviewRow } from "@/lib/public-preview";
-import { Lock, Minus, Radio } from "lucide-react";
+import { OTC_ASSET_LIST } from "@/data/assets";
+import type { OtcAssetSymbol } from "@/types";
+import { FlaskConical, Lock, Minus, Radio } from "lucide-react";
+
+/**
+ * A synthetic index is broker-generated, not a real market. Spec section 72
+ * forbids mixing the two, and a tab strip that lists "Volatility 75" beside
+ * "EUR/USD" with nothing between them is exactly that mixing in its quietest
+ * form: the visitor assumes both are markets because the UI never said
+ * otherwise. The marker is here, not only on the detail body, because the
+ * strip is what someone reads before clicking anything.
+ */
+function isSynthetic(symbol: string): boolean {
+  return OTC_ASSET_LIST.includes(symbol as OtcAssetSymbol);
+}
 
 /**
  * The engine, live, on the public page.
@@ -56,7 +70,10 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
-            {r.displayName}
+            <span className="inline-flex items-center gap-1">
+              {isSynthetic(r.symbol) && <FlaskConical className="h-3 w-3 text-notrade" />}
+              {r.displayName}
+            </span>
           </button>
         ))}
       </div>
@@ -64,7 +81,14 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
       <CardContent className="space-y-4 p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-foreground">{row.displayName}</p>
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+              {row.displayName}
+              {isSynthetic(row.symbol) && (
+                <span className="inline-flex items-center gap-1 rounded border border-notrade/40 bg-notrade/10 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-notrade">
+                  <FlaskConical className="h-2.5 w-2.5" /> Synthetic
+                </span>
+              )}
+            </p>
             <p className={cn("text-xs", stale ? "text-destructive" : "text-muted-foreground")}>
               {stale ? "last checked " : "checked "}
               {formatRelative(row.lastEvaluatedAt)}
@@ -138,6 +162,15 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
               />
             </div>
           </div>
+        )}
+
+        {isSynthetic(row.symbol) && (
+          <p className="rounded-md border border-dashed border-notrade/30 bg-notrade/5 p-2.5 text-[10.5px] leading-relaxed text-muted-foreground">
+            A broker-generated volatility index, not a real market. Its prices come
+            from Deriv&rsquo;s own random generator, so it runs 24/7 and no economic
+            news moves it. Results on it are tracked separately from real-market
+            instruments and never pooled with them.
+          </p>
         )}
 
         <Link href="/register" className="block">
