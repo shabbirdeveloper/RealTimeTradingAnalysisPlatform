@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import type { AssetSymbol, DataStatus } from "@/types";
+import type { AssetSymbol, DataStatus, MarketAssetSymbol } from "@/types";
 import { ASSET_LIST } from "@/data/assets";
 
 export interface AssetPriceSnapshot {
@@ -206,7 +206,7 @@ export async function getAssetPriceSnapshots(): Promise<
       latest_time: string | null;
       oldest_close: string | number | null;
     }>) {
-      const symbol = row.symbol as AssetSymbol;
+      const symbol = row.symbol as MarketAssetSymbol;
       if (!ASSET_LIST.includes(symbol) || row.latest_close === null || !row.latest_time) continue;
 
       const price = Number(row.latest_close);

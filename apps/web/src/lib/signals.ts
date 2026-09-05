@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
-import { ASSET_LIST } from "@/data/assets";
+import { ASSET_LIST, OTC_ASSET_LIST } from "@/data/assets";
 import type {
-  AssetSymbol, Direction, ExpiryCandidate, ExpiryMinutes, MarketRegime,
-  Signal, SignalGrade, SessionName, SignalStatus, TimeframeBias,
+  AssetSymbol, Direction, ExpiryCandidate, ExpiryMinutes, MarketAssetSymbol,
+  MarketRegime, Signal, SignalGrade, SessionName, SignalStatus, TimeframeBias,
 } from "@/types";
 
 /**
@@ -53,7 +53,7 @@ export async function getLatestSignals(): Promise<Record<AssetSymbol, Signal | n
 
     for (const raw of data as Array<SignalRow & { assets: { symbol: string } | { symbol: string }[] }>) {
       const assetRow = Array.isArray(raw.assets) ? raw.assets[0] : raw.assets;
-      const symbol = assetRow?.symbol as AssetSymbol | undefined;
+      const symbol = assetRow?.symbol as MarketAssetSymbol | undefined;
       if (!symbol || !ASSET_LIST.includes(symbol)) continue;
       if (result[symbol]) continue; // already have this asset's newest
       result[symbol] = shapeSignal(symbol, raw);
@@ -208,4 +208,45 @@ export async function getLastEvaluationTimes(): Promise<Record<string, string>> 
   } catch {
     return {};
   }
+}
+
+/**
+ * Latest decision per broker-OTC instrument.
+ *
+ * A separate query from getLatestSignals() rather than a widened one, for
+ * the reason spec section 72 gives: these must never be pooled with
+ * real-market results. Two functions make mixing them a deliberate act; one
+ * function with a list parameter makes it a typo.
+ */
+export async function getLatestOtcSignals(): Promise<Record<string, Signal | null>> {
+  const result: Record<string, Signal | null> = Object.fromEntries(
+    OTC_ASSET_LIST.map((a) => [a, null])
+  );
+
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("signals")
+      .select(
+        "id, direction, generated_at, last_evaluated_at, entry_price, expiry_minutes, expiry_seconds, expiry_at, technical_score, call_score, put_score, calibrated_confidence, grade, market_regime, status, session, reasons, warnings, timeframes_snapshot, assets!inner(symbol, market_type)"
+      )
+      .order("last_evaluated_at", { ascending: false, nullsFirst: false })
+      .limit(200);
+
+    if (error || !data) return result;
+
+    for (const raw of data as Array<
+      SignalRow & { assets: { symbol: string } | { symbol: string }[] }
+    >) {
+      const assetRow = Array.isArray(raw.assets) ? raw.assets[0] : raw.assets;
+      const symbol = assetRow?.symbol;
+      if (!symbol || !(symbol in result)) continue;
+      if (result[symbol]) continue; // already have this instrument's newest
+      result[symbol] = shapeSignal(symbol as AssetSymbol, raw);
+    }
+  } catch {
+    // Leave everything null -- an honest empty state, never a fabricated one.
+  }
+
+  return result;
 }

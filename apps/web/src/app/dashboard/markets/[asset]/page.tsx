@@ -3,9 +3,12 @@ import { MarketPageContent } from "@/components/dashboard/market-page-content";
 import { getAssetPriceSnapshot } from "@/lib/market-data";
 import { getLatestSignal } from "@/lib/signals";
 import { getLatestFeatures } from "@/lib/features";
-import type { AssetSymbol } from "@/types";
+import type { MarketAssetSymbol } from "@/types";
 
-const SLUG_MAP: Record<string, AssetSymbol> = {
+// Real-market routes only. Broker-generated instruments are rendered on
+// the dashboard's own OTC section, not here: this page's fallbacks are
+// seeded from real-market demo data that has no synthetic equivalent.
+const SLUG_MAP: Record<string, MarketAssetSymbol> = {
   xauusd: "XAUUSD",
   eurusd: "EURUSD",
   gbpusd: "GBPUSD",
@@ -21,7 +24,7 @@ export const dynamic = "force-dynamic"; // always read the latest price/signal/f
 
 export default async function MarketPage({ params }: { params: Promise<{ asset: string }> }) {
   const { asset: assetParam } = await params;
-  const asset = SLUG_MAP[assetParam.toLowerCase()];
+  const asset: MarketAssetSymbol = SLUG_MAP[assetParam.toLowerCase()];
   if (!asset) notFound();
 
   const [priceSnapshot, signal, features] = await Promise.all([

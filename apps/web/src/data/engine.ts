@@ -8,6 +8,7 @@
 // Nothing here is a real accuracy claim.
 // ------------------------------------------------------------------
 import type {
+  MarketAssetSymbol,
   AssetSymbol, Direction, ExpiryCandidate, ExpiryMinutes, MarketRegime,
   MarketSnapshot, Signal, SignalGrade, SessionName, Timeframe, TimeframeBias,
 } from "@/types";
@@ -53,7 +54,7 @@ function biasLabel(rand: () => number, driftBias: -1 | 0 | 1): "BULLISH" | "BEAR
   return r < 0.4 ? "BULLISH" : r < 0.8 ? "BEARISH" : "NEUTRAL";
 }
 
-export function generateTimeframes(asset: AssetSymbol, now: Date): TimeframeBias[] {
+export function generateTimeframes(asset: MarketAssetSymbol, now: Date): TimeframeBias[] {
   const bucket = timeBucket(now, 5);
   const rand = seededRandom(asset, bucket, "timeframes");
   // A slow-moving "macro drift" so H4/H1 usually agree more than M5/M15.
@@ -92,7 +93,7 @@ export function deriveRegime(timeframes: TimeframeBias[], rand: () => number): M
   return "RANGING";
 }
 
-export function generateMarketSnapshot(asset: AssetSymbol, now: Date): MarketSnapshot {
+export function generateMarketSnapshot(asset: MarketAssetSymbol, now: Date): MarketSnapshot {
   const bucket = timeBucket(now, 5);
   const rand = seededRandom(asset, bucket, "snapshot");
   const timeframes = generateTimeframes(asset, now);
@@ -116,7 +117,7 @@ export function generateMarketSnapshot(asset: AssetSymbol, now: Date): MarketSna
   };
 }
 
-function expiryCandidateFor(asset: AssetSymbol, now: Date, expiry: ExpiryMinutes, timeframes: TimeframeBias[], regime: MarketRegime, direction: Direction): ExpiryCandidate {
+function expiryCandidateFor(asset: MarketAssetSymbol, now: Date, expiry: ExpiryMinutes, timeframes: TimeframeBias[], regime: MarketRegime, direction: Direction): ExpiryCandidate {
   const bucket = timeBucket(now, 5);
   const rand = seededRandom(asset, bucket, "expiry", expiry);
 
@@ -164,7 +165,7 @@ function expiryCandidateFor(asset: AssetSymbol, now: Date, expiry: ExpiryMinutes
 
 const GRADE_RANK: Record<SignalGrade, number> = { "A++": 4, "A+": 3, A: 2, B: 1, REJECTED: 0 };
 
-export function generateSignal(asset: AssetSymbol, now: Date): Signal {
+export function generateSignal(asset: MarketAssetSymbol, now: Date): Signal {
   const bucket = timeBucket(now, 5);
   const snapshot = generateMarketSnapshot(asset, now);
   const { timeframes, regime } = snapshot;
@@ -310,7 +311,7 @@ export interface TechnicalMetrics {
   bollingerWidth: number;
 }
 
-export function generateTechnicalMetrics(asset: AssetSymbol, now: Date): TechnicalMetrics {
+export function generateTechnicalMetrics(asset: MarketAssetSymbol, now: Date): TechnicalMetrics {
   const bucket = timeBucket(now, 5);
   const rand = seededRandom(asset, bucket, "technical");
   const base = BASE_PRICES[asset];
@@ -332,7 +333,7 @@ export function generateTechnicalMetrics(asset: AssetSymbol, now: Date): Technic
   };
 }
 
-export function generateStructureNotes(asset: AssetSymbol, now: Date): string[] {
+export function generateStructureNotes(asset: MarketAssetSymbol, now: Date): string[] {
   const bucket = timeBucket(now, 5);
   const rand = seededRandom(asset, bucket, "structure");
   const pool = [

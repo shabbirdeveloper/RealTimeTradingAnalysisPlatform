@@ -6,7 +6,8 @@ import { getPerformanceCounts } from "@/lib/performance";
 import { breakEvenWinRate, wilsonInterval } from "@/lib/statistics";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
-import { getLatestSignals, getLastEvaluationTimes } from "@/lib/signals";
+import { getLatestSignals, getLastEvaluationTimes, getLatestOtcSignals } from "@/lib/signals";
+import { OtcSection } from "@/components/dashboard/otc-section";
 import { OtcWarning } from "@/components/shared/otc-warning";
 import { cn } from "@/lib/utils";
 import type { AssetSymbol, Signal } from "@/types";
@@ -55,10 +56,11 @@ export default async function DashboardHomePage() {
     : verdict === "Losing" ? "text-put"
     : "text-muted-foreground";
 
-  const [priceData, signals, evaluatedAt] = await Promise.all([
+  const [priceData, signals, evaluatedAt, otcSignals] = await Promise.all([
     getAssetPriceSnapshotsWithReason(),
     getLatestSignals(),
     getLastEvaluationTimes(),
+    getLatestOtcSignals(),
   ]);
   const { snapshots, failure: dataFailure } = priceData;
 
@@ -163,6 +165,8 @@ export default async function DashboardHomePage() {
           );
         })}
       </div>
+
+      <OtcSection signals={otcSignals} />
     </div>
   );
 }

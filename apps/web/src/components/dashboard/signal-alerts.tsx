@@ -1,11 +1,15 @@
 "use client";
 import { useEffect, useRef } from "react";
-import type { AssetSymbol, Signal } from "@/types";
+import type { AssetSymbol, MarketAssetSymbol, Signal } from "@/types";
 import { ASSET_CONFIGS } from "@/data/assets";
 import { showSignalNotification } from "@/lib/browser-notifications";
 import { loadPreferences, type NotificationPreferences } from "@/lib/notification-preferences";
 
-const ASSET_PREF_KEY: Record<AssetSymbol, keyof NotificationPreferences> = {
+// Real-market only: the notification preference columns are per real
+// pair (migration 12). A synthetic index has no toggle, so alerts for
+// one fall through rather than being silently attributed to a pair the
+// user did enable.
+const ASSET_PREF_KEY: Partial<Record<AssetSymbol, keyof NotificationPreferences>> = {
   XAUUSD: "xauusdEnabled",
   EURUSD: "eurusdEnabled",
   GBPUSD: "gbpusdEnabled",
@@ -50,7 +54,10 @@ export function SignalAlerts({ signals }: { signals: Record<AssetSymbol, Signal 
       if (!signal) continue;
       if (signal.direction === "NO_TRADE") continue;
       if (announced.current.has(signal.id)) continue;
-      if (!preferences[ASSET_PREF_KEY[asset]]) continue;
+      // A synthetic index has no per-pair toggle, so it is not announced
+      // rather than being announced under some other pair's setting.
+      const prefKey = ASSET_PREF_KEY[asset];
+      if (!prefKey || !preferences[prefKey]) continue;
       if (!gradeAllowed(signal.grade, preferences)) continue;
 
       announced.current.add(signal.id);

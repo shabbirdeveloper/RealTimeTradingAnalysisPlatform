@@ -1,4 +1,4 @@
-import type { AssetSymbol, Signal } from "@/types";
+import type { AssetSymbol, Signal , MarketAssetSymbol } from "@/types";
 import { ASSET_LIST } from "./assets";
 import { generateSignal } from "./engine";
 import { HISTORICAL_SIGNALS } from "./history";
@@ -14,7 +14,7 @@ export function findSignalById(id: string): Signal | undefined {
 
   const match = id.match(/^([A-Z]+)-(\d+)-(.+)$/);
   if (!match) return undefined;
-  const asset = match[1] as AssetSymbol;
+  const asset = match[1] as MarketAssetSymbol;
   const bucket = Number(match[2]);
   if (!ASSET_LIST.includes(asset) || Number.isNaN(bucket)) return undefined;
 

@@ -3,7 +3,7 @@ import { useNow } from "@/lib/use-now";
 import { ASSET_CONFIGS } from "@/data/assets";
 import { generateMarketSnapshot, generateSignal, generateTechnicalMetrics, generateStructureNotes } from "@/data/engine";
 import { HISTORICAL_SIGNALS, PERFORMANCE_SUMMARY } from "@/data/history";
-import type { AssetSymbol, Signal } from "@/types";
+import type { AssetSymbol, MarketAssetSymbol, Signal } from "@/types";
 import type { AssetPriceSnapshot } from "@/lib/market-data";
 import type { RealStructureReading, RealTechnicalMetrics } from "@/lib/features";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -31,7 +31,7 @@ export function MarketPageContent({
   signal: realSignal,
   features,
 }: {
-  asset: AssetSymbol;
+  asset: MarketAssetSymbol;
   priceSnapshot?: AssetPriceSnapshot | null;
   signal?: Signal | null;
   features?: { technical: RealTechnicalMetrics; structure: RealStructureReading } | null;

@@ -1,4 +1,4 @@
-import type { AssetConfig, AssetSymbol } from "@/types";
+import type { AssetConfig, AssetSymbol, MarketAssetSymbol, OtcAssetSymbol } from "@/types";
 
 export const ASSET_CONFIGS: Record<AssetSymbol, AssetConfig> = {
   XAUUSD: {
@@ -44,18 +44,58 @@ export const ASSET_CONFIGS: Record<AssetSymbol, AssetConfig> = {
     contextFactors: ["Trades 24/7", "US macro (rates, CPI)", "Correlated to BTC", "High volatility regime"],
     sessions: ["ASIAN", "LONDON", "NEW_YORK", "LONDON_NY_OVERLAP"],
   },
+  // Deriv synthetic indices. The number is that index's nominal annualised
+  // volatility, which is the whole basis for choosing between them: V25 and
+  // V75 are the same generator at very different speeds.
+  DERIV_V75: {
+    symbol: "DERIV_V75",
+    displayName: "Volatility 75",
+    shortName: "V75 · Deriv",
+    pipDecimal: 4,
+    contextFactors: ["Broker-generated, not a real market", "Trades 24/7 including weekends", "High nominal volatility", "No news impact"],
+    sessions: ["ASIAN", "LONDON", "NEW_YORK", "LONDON_NY_OVERLAP"],
+  },
+  DERIV_V50: {
+    symbol: "DERIV_V50",
+    displayName: "Volatility 50",
+    shortName: "V50 · Deriv",
+    pipDecimal: 4,
+    contextFactors: ["Broker-generated, not a real market", "Trades 24/7 including weekends", "Moderate nominal volatility", "No news impact"],
+    sessions: ["ASIAN", "LONDON", "NEW_YORK", "LONDON_NY_OVERLAP"],
+  },
+  DERIV_V25: {
+    symbol: "DERIV_V25",
+    displayName: "Volatility 25",
+    shortName: "V25 · Deriv",
+    pipDecimal: 4,
+    contextFactors: ["Broker-generated, not a real market", "Trades 24/7 including weekends", "Low nominal volatility", "No news impact"],
+    sessions: ["ASIAN", "LONDON", "NEW_YORK", "LONDON_NY_OVERLAP"],
+  },
 };
 
-export const ASSET_LIST: AssetSymbol[] = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"];
+/** Real-market instruments. Drives the main dashboard grid. */
+export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"];
+
+/**
+ * Broker-generated instruments, listed separately and rendered in their own
+ * section. Appending them to ASSET_LIST would have put a synthetic series
+ * into every real-market total on the page — which is exactly what spec
+ * section 72 forbids, and would have been invisible once it happened.
+ */
+export const OTC_ASSET_LIST: OtcAssetSymbol[] = ["DERIV_V75", "DERIV_V50", "DERIV_V25"];
 
 /** Assets that trade continuously (no weekend close). Mirrors CRYPTO_SYMBOLS in apps/api/app/instruments.py. */
 export const ALWAYS_OPEN_ASSETS: AssetSymbol[] = ["BTCUSD", "ETHUSD"];
 
 export function tradesAroundTheClock(asset: AssetSymbol): boolean {
-  return ALWAYS_OPEN_ASSETS.includes(asset);
+  // Broker-generated instruments never close: their generator does not stop.
+  if (OTC_ASSET_LIST.includes(asset as OtcAssetSymbol)) return true;
+  return ALWAYS_OPEN_ASSETS.includes(asset as MarketAssetSymbol);
 }
 
-export const BASE_PRICES: Record<AssetSymbol, number> = {
+// Demo-engine seed prices, real-market only. A synthetic index has no
+// meaningful base price to seed, and it never uses this path.
+export const BASE_PRICES: Record<MarketAssetSymbol, number> = {
   XAUUSD: 2418.35,
   EURUSD: 1.0842,
   GBPUSD: 1.2671,
