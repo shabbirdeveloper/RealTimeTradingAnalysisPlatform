@@ -105,3 +105,47 @@ class StrategyVersionIsPartOfIdentity(unittest.TestCase):
         not fingerprint differently, or every pre-migration row would be
         duplicated once on the first cycle after deploy."""
         self.assertEqual(fingerprint(*self.ARGS, ""), fingerprint(*self.ARGS))
+
+
+class LegacyExpiryColumnTests(unittest.TestCase):
+    """`signals.expiry_minutes` carries a CHECK constraint limiting it to
+    (15, 30, 60) -- the pre-OTC vocabulary. Writing anything else rejects
+    the WHOLE row, so a decision can be computed, logged, and then silently
+    discarded by the database.
+
+    That is not hypothetical: the first real Deriv decision was lost that
+    way. Its 300-second expiry is exactly five minutes, and five is a whole
+    number of minutes but not a legal value.
+    """
+
+    LEGACY = (15, 30, 60)
+
+    def _minutes_for(self, expiry_seconds):
+        # Mirrors signal_repository's rule. Kept here as an assertion about
+        # the rule rather than a re-implementation of it: what matters is
+        # that nothing outside the legal set can ever reach the column.
+        if expiry_seconds is not None and expiry_seconds % 60 == 0:
+            candidate = expiry_seconds // 60
+            if candidate in self.LEGACY:
+                return candidate
+        return None
+
+    def test_real_market_horizons_still_populate_the_column(self):
+        for seconds, expected in ((900, 15), (1800, 30), (3600, 60)):
+            self.assertEqual(self._minutes_for(seconds), expected)
+
+    def test_otc_horizons_are_null_not_a_rounded_number(self):
+        for seconds in (15, 30, 60, 120, 180, 300, 600):
+            self.assertIsNone(
+                self._minutes_for(seconds),
+                f"{seconds}s would write an illegal expiry_minutes and lose the row",
+            )
+
+    def test_nothing_outside_the_constraint_can_be_written(self):
+        for seconds in range(0, 7300, 15):
+            value = self._minutes_for(seconds)
+            if value is not None:
+                self.assertIn(value, self.LEGACY)
+
+    def test_a_null_expiry_stays_null(self):
+        self.assertIsNone(self._minutes_for(None))

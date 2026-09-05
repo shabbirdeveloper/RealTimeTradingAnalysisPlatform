@@ -79,13 +79,15 @@ async def run_all_assets(*, force: bool = False) -> None:
     logger.info("---- poll cycle starting ----")
 
     provider = build_provider()
+    polled: list[str] = []
+    skipped: dict[str, str] = {}
     for asset in Asset:
         # Per-asset, not per-cycle: crypto trades through the weekend while
         # forex/gold are shut. A single global check would either blind the
         # crypto pairs on Saturday or burn API credits re-fetching identical
         # closed-market forex candles.
         if not force and not is_market_open(asset):
-            logger.debug("%s market closed -- skipping", asset.value)
+            skipped[asset.value] = "market closed"
             continue
 
         # Per-asset cadence (see collector/cadence.py). One global interval
@@ -94,12 +96,10 @@ async def run_all_assets(*, force: bool = False) -> None:
         # does not degrade gracefully when you guess wrong.
         now = datetime.now(timezone.utc)
         if not force and not should_poll(asset.value, now, _last_polled.get(asset.value)):
-            logger.debug(
-                "%s not due yet (every %ds right now) -- skipping",
-                asset.value, interval_seconds(asset.value, now),
-            )
+            skipped[asset.value] = f"not due (every {interval_seconds(asset.value, now)}s)"
             continue
         _last_polled[asset.value] = now
+        polled.append(asset.value)
 
         try:
             await run_poll_cycle(asset, provider, poll_outputsize=settings.poll_outputsize)
@@ -119,10 +119,23 @@ async def run_all_assets(*, force: bool = False) -> None:
             logger.exception("poll cycle crashed for %s -- continuing with other assets", asset.value)
 
     elapsed = time.monotonic() - started
-    logger.info(
-        "---- poll cycle done in %.1fs; next in ~%ds ----",
-        elapsed, settings.poll_interval_seconds,
-    )
+    # A cycle that polled nothing used to print "done in 0.0s" and stop,
+    # which is indistinguishable from a cycle that worked. Every asset was
+    # skipped for a reason, and the reasons are the only interesting thing
+    # about such a cycle -- so say them, at INFO, where someone reading the
+    # console will actually see them.
+    if not polled:
+        logger.info(
+            "---- poll cycle polled NOTHING: %s ----",
+            "; ".join(f"{a} ({why})" for a, why in skipped.items()) or "no assets configured",
+        )
+    else:
+        logger.info(
+            "---- poll cycle done in %.1fs; polled %s%s; next in ~%ds ----",
+            elapsed, ", ".join(polled),
+            f"; skipped {len(skipped)}" if skipped else "",
+            settings.poll_interval_seconds,
+        )
 
     # Signal resolution (spec section 49) -- checks real candles against
     # any ACTIVE signal whose expiry has passed. Reads already-stored

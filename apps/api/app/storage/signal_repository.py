@@ -163,11 +163,22 @@ def insert_signal(asset: Asset | str, decision: SignalDecision) -> SignalWrite:
     # rather than rounded. A 15-second expiry rounded to 0 minutes is wrong,
     # and rounded to 1 minute is a four-fold lie about the horizon; a null
     # reads honestly as "this horizon is not expressible in this column".
-    expiry_minutes = (
-        expiry_seconds // 60
-        if expiry_seconds is not None and expiry_seconds % 60 == 0
-        else None
-    )
+    # Only the three legacy real-market horizons. The column carries a
+    # CHECK constraint restricting it to (15, 30, 60) -- it is the pre-OTC
+    # vocabulary, and that constraint is what documents it.
+    #
+    # A whole number of minutes is not sufficient. An OTC 300-second expiry
+    # is exactly five minutes, and writing 5 here rejected the entire row:
+    # the first real Deriv decision was computed, logged, and then thrown
+    # away by the database. NULL reads honestly as "this horizon is not
+    # expressible in the legacy column", which is the truth for every
+    # broker-OTC expiry.
+    LEGACY_EXPIRY_MINUTES = (15, 30, 60)
+    expiry_minutes = None
+    if expiry_seconds is not None and expiry_seconds % 60 == 0:
+        candidate = expiry_seconds // 60
+        if candidate in LEGACY_EXPIRY_MINUTES:
+            expiry_minutes = candidate
 
     row = {
         "asset_id": asset_id,
