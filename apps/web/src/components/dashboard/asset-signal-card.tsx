@@ -10,6 +10,9 @@ import type { DataStatus, Signal } from "@/types";
 import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 import { MarketRead } from "@/components/dashboard/market-read";
+import { MarketClosedNotice } from "@/components/dashboard/market-closed-notice";
+import { isMarketOpen } from "@/lib/market-hours";
+import { useNow } from "@/lib/use-now";
 
 export function AssetSignalCard({
   signal,
@@ -35,6 +38,11 @@ export function AssetSignalCard({
   lastEvaluatedAt?: string | null;
 }) {
   const cfg = ASSET_CONFIGS[signal.asset];
+  // Null until hydration, so the server renders the ordinary card and the
+  // closed state appears client-side. Getting this backwards would mean SSR
+  // asserting "closed" from the server's clock, which is not the viewer's.
+  const now = useNow(30_000);
+  const closed = now !== null && !isMarketOpen(signal.asset, now);
   const isNoTrade = signal.direction === "NO_TRADE";
   const isAplusplus = signal.grade === "A++";
 
@@ -61,7 +69,7 @@ export function AssetSignalCard({
             ) : (
               <Badge variant="outline" className="text-muted-foreground">Not analyzed</Badge>
             )}
-            {dataStatus && <DataStatusPill status={dataStatus} />}
+            {dataStatus && !closed && <DataStatusPill status={dataStatus} />}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -82,7 +90,9 @@ export function AssetSignalCard({
             </span>
           </div>
 
-          {isNoTrade ? (
+          {closed ? (
+            <MarketClosedNotice asset={signal.asset} />
+          ) : isNoTrade ? (
             <div className="space-y-3 rounded-md border border-dashed border-border bg-secondary/30 p-3">
               <DirectionBadge direction="NO_TRADE" />
               <p className="text-xs leading-relaxed text-muted-foreground">

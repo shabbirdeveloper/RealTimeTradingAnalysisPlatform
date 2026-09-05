@@ -13,6 +13,8 @@ import { DirectionBadge, GradeBadge, RegimeBadge, DataStatusPill, DemoDataBanner
 import { Skeleton } from "@/components/ui/skeleton";
 import { expirySecondsOf, formatDateTimeUTC, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus, AlertTriangle } from "lucide-react";
+import { MarketClosedNotice } from "@/components/dashboard/market-closed-notice";
+import { isMarketOpen } from "@/lib/market-hours";
 
 /**
  * Real price/signal/features when apps/api's collector + signal engine
@@ -69,6 +71,7 @@ export function MarketPageContent({
   const candidates = hasRealSignal ? realSignal!.candidates : demoSignal.candidates;
   const technical = features?.technical;
   const structure = features?.structure;
+  const closed = !isMarketOpen(asset, now);
 
   return (
     <div className="space-y-6">
@@ -78,10 +81,12 @@ export function MarketPageContent({
           <p className="text-sm text-muted-foreground">{cfg.contextFactors.join(" · ")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <DataStatusPill status={dataStatus} />
+          {!closed && <DataStatusPill status={dataStatus} />}
           <RegimeBadge regime={regime} />
         </div>
       </div>
+
+      {closed && <MarketClosedNotice asset={asset} />}
 
       {hasRealPrice ? (
         <div className="flex items-start gap-2.5 rounded-lg border border-notrade/20 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">
