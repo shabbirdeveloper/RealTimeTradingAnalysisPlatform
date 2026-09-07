@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     # every asset -- the escape hatch if a provider plan changes shape.
     adaptive_polling: bool = Field(default=True)
 
+    # The public-market collector (XAUUSD/EURUSD/GBPUSD/BTC/ETH), OFF by
+    # default. The reset concentrates the whole engineering effort on one
+    # broker-OTC series, and the spec is explicit that no other instrument
+    # should generate signals while that is true.
+    #
+    # Disabled rather than deleted: the provider, storage and dashboard
+    # pages all still work, so re-enabling is a flag rather than a
+    # restoration. Turning it on means two engines run at once, and their
+    # results must not then be pooled into one accuracy figure.
+    public_market_collector_enabled: bool = Field(default=False)
+
     # Deriv synthetic indices -- broker-generated instruments that trade
     # 24/7, through a documented public API. Only an app_id is needed;
     # market data requires no account token, so nothing secret lives here.

@@ -23,7 +23,8 @@ from app.collector.cadence import (
 )
 from app.collector.market_hours import any_market_open, is_market_open
 from app.collector.resolution import resolve_expired_signals, resolve_shadow_opportunities
-from app.collector.otc_service import run_otc_cycle
+from app.otc.collector import run_cycle as run_otc_cycle
+from app.otc.config import CONFIG, TIMEFRAME_SECONDS, enabled_symbols
 from app.collector.service import run_poll_cycle
 from app.config import get_settings
 from app.market_data.base import MarketDataProvider
@@ -40,6 +41,11 @@ _scheduler: AsyncIOScheduler | None = None
 # on purpose: after a restart every asset is due immediately, which is
 # the behaviour you want -- a restart should refresh, not wait.
 _last_polled: dict[str, datetime] = {}
+
+
+# Phase 12's evaluation cadence. Named rather than inline so the scheduler
+# and the engine's own config cannot drift apart unnoticed.
+OTC_TICK_SECONDS = TIMEFRAME_SECONDS[CONFIG.evaluation_timeframe]
 
 
 def build_provider() -> MarketDataProvider:
@@ -168,17 +174,18 @@ async def run_daily_heartbeat() -> None:
 
 
 async def run_otc_assets() -> None:
-    """The broker-OTC cycle, on its own schedule.
+    """The OTC cycle (app.otc), on its own schedule.
 
     Separate from the public-market job because the two have nothing in
     common operationally. OTC instruments never close, so there are no
     market hours to respect; the horizon is five minutes rather than
-    fifteen, so the useful polling interval is minutes rather than tens of
-    minutes; and the budget is a different provider's.
+    fifteen; and the budget is a different provider's.
 
     Wrapped whole: an OTC failure must not touch public-market collection
     or signal resolution, which is what a shared job would risk.
     """
+    from app.market_data.deriv_feed import DerivSyntheticFeed
+
     settings = get_settings()
     if not settings.deriv_app_id:
         return
@@ -186,7 +193,7 @@ async def run_otc_assets() -> None:
         logger.warning("SUPABASE not configured -- skipping OTC cycle")
         return
     try:
-        await run_otc_cycle(settings.deriv_symbol_list, settings.deriv_app_id)
+        await run_otc_cycle(DerivSyntheticFeed(settings.deriv_app_id))
     except Exception:  # noqa: BLE001
         logger.exception("OTC cycle failed")
 
@@ -196,14 +203,20 @@ def start_scheduler() -> AsyncIOScheduler:
     settings = get_settings()
     _scheduler = AsyncIOScheduler(timezone="UTC")
     tick = TICK_SECONDS if settings.adaptive_polling else settings.poll_interval_seconds
-    _scheduler.add_job(
-        run_all_assets,
-        "interval",
-        seconds=tick,
-        id="market_data_poll",
-        max_instances=1,
-        coalesce=True,
-    )
+    if settings.public_market_collector_enabled:
+        _scheduler.add_job(
+            run_all_assets,
+            "interval",
+            seconds=tick,
+            id="market_data_poll",
+            max_instances=1,
+            coalesce=True,
+        )
+    else:
+        logger.info(
+            "public-market collector disabled -- the OTC engine is the only "
+            "engine running (PUBLIC_MARKET_COLLECTOR_ENABLED=true to re-enable)"
+        )
     if settings.heartbeat_enabled:
         _scheduler.add_job(
             run_daily_heartbeat,
@@ -219,35 +232,43 @@ def start_scheduler() -> AsyncIOScheduler:
         logger.info("daily heartbeat disabled (HEARTBEAT_HOUR_UTC=-1)")
 
     if settings.deriv_app_id:
-        # Every minute. The primary OTC horizon is five minutes, and a
-        # decision made on data up to five minutes old would be reasoning
-        # about a bar that has already expired. Deriv publishes no hard
-        # daily request cap the way the quote vendor does, but this is
-        # still one instrument's worth of requests -- widen the symbol
-        # list deliberately, not by accident.
+        # Every 30 seconds, so each closed S30 bar is evaluated exactly
+        # once (spec Phase 12). Evaluating per tick instead produces
+        # decisions that flip before the bar they were computed from has
+        # finished forming; evaluating less often means the entry-timing
+        # check reads a bar that is already history.
+        #
+        # coalesce + max_instances=1 matter here: a slow cycle must be
+        # skipped, never queued. A backlog of 30-second jobs would evaluate
+        # stale markets at speed and store every one of them.
         _scheduler.add_job(
             run_otc_assets,
             "interval",
-            seconds=60,
+            seconds=OTC_TICK_SECONDS,
             id="otc_poll",
             max_instances=1,
             coalesce=True,
         )
         logger.info(
-            "OTC scheduler started (every 60s) for %s",
-            ", ".join(settings.deriv_symbol_list) or "(none configured)",
+            "OTC engine started (every %ss) for %s",
+            OTC_TICK_SECONDS, ", ".join(enabled_symbols()) or "(none enabled)",
         )
 
     _scheduler.start()
-    if settings.adaptive_polling:
-        symbols = [a.value for a in Asset]
-        logger.info(
-            "market data scheduler started (tick=%ss, per-asset cadence; "
-            "~%.0f provider requests/day at this configuration)",
-            tick, daily_request_estimate(symbols),
-        )
-    else:
-        logger.info("market data scheduler started (fixed interval=%ss)", tick)
+    # Only report the public-market cadence when that job actually exists.
+    # Logging "scheduler started" for a job that was never added is the
+    # same class of error as a stale price shown as live: the line reads
+    # as a statement about the world and is not one.
+    if settings.public_market_collector_enabled:
+        if settings.adaptive_polling:
+            symbols = [a.value for a in Asset]
+            logger.info(
+                "market data scheduler started (tick=%ss, per-asset cadence; "
+                "~%.0f provider requests/day at this configuration)",
+                tick, daily_request_estimate(symbols),
+            )
+        else:
+            logger.info("market data scheduler started (fixed interval=%ss)", tick)
     return _scheduler
 
 
