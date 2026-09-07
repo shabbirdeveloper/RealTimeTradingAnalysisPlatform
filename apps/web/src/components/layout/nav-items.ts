@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard, Radio, LineChart, SlidersHorizontal, History,
-  BarChart3, CalendarClock, Bell, Settings, CreditCard,
+  BarChart3, CalendarClock, Bell, Settings, CreditCard, Cpu,
 } from "lucide-react";
 
 export interface NavItem {
@@ -13,6 +13,9 @@ export interface NavItem {
 export const DASHBOARD_NAV: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Live Signals", href: "/dashboard/signals", icon: Radio },
+  // Placed high deliberately: on a selective engine the declines ARE the
+  // output, and burying them leaves the product looking idle.
+  { label: "Engine", href: "/dashboard/engine", icon: Cpu },
   { label: "Markets", href: "/dashboard/markets/xauusd", icon: LineChart },
   { label: "Analyzer", href: "/dashboard/analyzer", icon: SlidersHorizontal },
   { label: "History", href: "/dashboard/history", icon: History },
