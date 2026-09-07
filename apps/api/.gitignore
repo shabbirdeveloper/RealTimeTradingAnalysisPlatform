@@ -13,3 +13,6 @@ __pycache__/
 # Collector logs — runtime output, may contain operational detail.
 logs/
 *.log
+
+# Backtest reports: local measurements of local data, regenerated on demand.
+backtests/

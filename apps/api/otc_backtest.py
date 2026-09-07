@@ -42,6 +42,18 @@ import argparse
 import math
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+# Every line goes to a file as well as the console. The console window
+# closes, scrolls away, or gets screenshotted at the wrong moment; a file
+# can be reread and sent. The report is the whole point of running this,
+# so losing it to a closed window is a real failure mode.
+_TRANSCRIPT: list[str] = []
+
+
+def out(text: str = "") -> None:
+    print(text)
+    _TRANSCRIPT.append(text)
 
 from app.otc.config import CONFIG, TIMEFRAME_SECONDS, profile_for
 from app.otc.engine import evaluate
@@ -132,11 +144,23 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
 
     missing = [tf for tf in profile.required if tf not in series]
     if missing:
-        return {"error": f"no stored candles for {', '.join(missing)}"}
+        return {"error": (
+            f"no stored {'/'.join(missing)} candles for {symbol}. "
+            "The backtest replays what the collector SAVED — it does not fetch. "
+            "Run start-collector.bat and leave it running; there is nothing to "
+            "replay until it has stored some history."
+        )}
 
     entry_rows = series[profile.entry]
-    if len(entry_rows) < 50:
-        return {"error": f"only {len(entry_rows)} {profile.entry} bars stored"}
+    have_hours = len(entry_rows) * TIMEFRAME_SECONDS[profile.entry] / 3600
+    if len(entry_rows) < 200:
+        return {"error": (
+            f"only {len(entry_rows)} {profile.entry} bars stored (~{have_hours:.1f} hours). "
+            "A few hours is not enough to say anything: the warm-up alone consumes "
+            "most of it, and a rate measured on a handful of trades has an interval "
+            "wide enough to include both profit and ruin. Leave the collector running "
+            "for a day, then run this again."
+        )}
 
     # Original thresholds restored afterwards -- a sweep must not leave the
     # live engine configured by whatever the last iteration happened to try.
@@ -211,25 +235,25 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
 
 def report(r: dict) -> None:
     if r.get("error"):
-        print(f"  {r['error']}")
+        out(f"  {r['error']}")
         return
 
     decided = r["wins"] + r["losses"]
     per_day = r["signals"] / r["span_days"]
-    print(f"  window            {r['span_days']:.1f} days")
-    print(f"  evaluations       {r['evaluations']}")
-    print(f"  signals           {r['signals']}  ({per_day:.1f} per day)")
-    print(f"  unresolved        {r['unresolved']}  (no bar at expiry — not counted as losses)")
-    print(f"  W / L / D         {r['wins']} / {r['losses']} / {r['draws']}")
+    out(f"  window            {r['span_days']:.1f} days")
+    out(f"  evaluations       {r['evaluations']}")
+    out(f"  signals           {r['signals']}  ({per_day:.1f} per day)")
+    out(f"  unresolved        {r['unresolved']}  (no bar at expiry — not counted as losses)")
+    out(f"  W / L / D         {r['wins']} / {r['losses']} / {r['draws']}")
 
     if decided == 0:
-        print("\n  No resolved trades. Nothing can be concluded about accuracy.")
+        out("\n  No resolved trades. Nothing can be concluded about accuracy.")
         return
 
     rate = r["wins"] / decided * 100
     low, high = wilson(r["wins"], decided)
-    print(f"  win rate          {rate:.1f}%   95% CI {low:.1f}–{high:.1f}%")
-    print()
+    out(f"  win rate          {rate:.1f}%   95% CI {low:.1f}–{high:.1f}%")
+    out()
     for payout in PAYOUTS:
         be = break_even(payout)
         if low > be:
@@ -238,38 +262,38 @@ def report(r: dict) -> None:
             verdict = "LOSES at this payout (upper bound is below break-even)"
         else:
             verdict = "UNPROVEN — the interval straddles break-even"
-        print(f"  at {payout:.0%} payout    break-even {be:.1f}%  ->  {verdict}")
+        out(f"  at {payout:.0%} payout    break-even {be:.1f}%  ->  {verdict}")
 
-    print()
+    out()
     for side, (w, n) in r["by_direction"].items():
         if n:
-            print(f"  {side:<5} {w}/{n} = {w/n*100:.1f}%")
+            out(f"  {side:<5} {w}/{n} = {w/n*100:.1f}%")
 
     if r.get("by_strategy"):
-        print()
-        print("  BY STRATEGY — which idea is actually working")
-        print(f"    {'strategy':<24} {'signals':>8} {'per day':>8} {'W':>4} {'L':>4} "
+        out()
+        out("  BY STRATEGY — which idea is actually working")
+        out(f"    {'strategy':<24} {'signals':>8} {'per day':>8} {'W':>4} {'L':>4} "
               f"{'rate':>7} {'95% CI':>14}")
         for name, (w, decided_n, sig) in sorted(
             r["by_strategy"].items(), key=lambda kv: -kv[1][2]
         ):
             per_day = sig / r["span_days"]
             if decided_n == 0:
-                print(f"    {name:<24} {sig:>8} {per_day:>8.1f} {'—':>4} {'—':>4} {'—':>7}")
+                out(f"    {name:<24} {sig:>8} {per_day:>8.1f} {'—':>4} {'—':>4} {'—':>7}")
                 continue
             rate = w / decided_n * 100
             low, high = wilson(w, decided_n)
-            print(f"    {name:<24} {sig:>8} {per_day:>8.1f} {w:>4} {decided_n - w:>4} "
+            out(f"    {name:<24} {sig:>8} {per_day:>8.1f} {w:>4} {decided_n - w:>4} "
                   f"{rate:>6.1f}% {f'{low:.0f}-{high:.0f}%':>14}")
-        print()
-        print("    A strategy needs BOTH: enough signals to be worth enabling, and a")
-        print("    LOWER bound above break-even. One that fires twice a week has")
-        print("    demonstrated nothing however good its headline rate looks.")
+        out()
+        out("    A strategy needs BOTH: enough signals to be worth enabling, and a")
+        out("    LOWER bound above break-even. One that fires twice a week has")
+        out("    demonstrated nothing however good its headline rate looks.")
 
     if r["blocked"]:
-        print("\n  what declined the rest:")
+        out("\n  what declined the rest:")
         for reason, count in sorted(r["blocked"].items(), key=lambda kv: -kv[1])[:6]:
-            print(f"    {count:>5}  {reason[:70]}")
+            out(f"    {count:>5}  {reason[:70]}")
 
 
 def main() -> int:
@@ -280,47 +304,68 @@ def main() -> int:
     parser.add_argument("--separation", type=int, default=CONFIG.minimum_directional_difference)
     parser.add_argument("--step", type=int, default=0, help="seconds between evaluations")
     parser.add_argument("--sweep", action="store_true", help="try a range of thresholds")
+    parser.add_argument("--out", default=None,
+                        help="where to write the report (default: backtests/<symbol>-<time>.txt)")
     args = parser.parse_args()
 
     profile = profile_for(args.symbol)
     step = args.step or profile.evaluation_seconds
 
-    print(f"\n{args.symbol} — 5-minute engine, {args.days}d of stored history, "
+    out(f"\n{args.symbol} — 5-minute engine, {args.days}d of stored history, "
           f"evaluating every {step}s\n")
 
     if not args.sweep:
         report(run(args.symbol, args.days, args.threshold, args.separation, step))
-        print()
+        out()
+        _save(args)
         return 0
 
-    print(f"{'score':>6} {'sep':>4} {'signals':>8} {'per day':>8} "
+    out(f"{'score':>6} {'sep':>4} {'signals':>8} {'per day':>8} "
           f"{'W':>5} {'L':>5} {'rate':>7} {'95% CI':>15}")
-    print("-" * 64)
+    out("-" * 64)
     for threshold in (50, 55, 60, 65, 70, 75, 78, 82):
         for separation in (10, 18, 25):
             r = run(args.symbol, args.days, threshold, separation, step)
             if r.get("error"):
-                print(f"{threshold:>6} {separation:>4}   {r['error']}")
+                out(f"{threshold:>6} {separation:>4}   {r['error']}")
                 continue
             decided = r["wins"] + r["losses"]
             if decided == 0:
-                print(f"{threshold:>6} {separation:>4} {r['signals']:>8} "
+                out(f"{threshold:>6} {separation:>4} {r['signals']:>8} "
                       f"{r['signals']/r['span_days']:>8.1f} {'—':>5} {'—':>5} {'—':>7}")
                 continue
             rate = r["wins"] / decided * 100
             low, high = wilson(r["wins"], decided)
-            print(f"{threshold:>6} {separation:>4} {r['signals']:>8} "
+            out(f"{threshold:>6} {separation:>4} {r['signals']:>8} "
                   f"{r['signals']/r['span_days']:>8.1f} {r['wins']:>5} {r['losses']:>5} "
                   f"{rate:>6.1f}% {f'{low:.0f}–{high:.0f}%':>15}")
 
-    print()
-    print("Break-even is 55.6% at an 80% payout, 52.4% at 91%.")
-    print("Read the LOWER bound of the interval, never the headline rate: a row")
-    print("showing 60% on 12 trades whose interval reaches down to 32% has not")
-    print("demonstrated anything, and picking the best-looking row from a sweep")
-    print("is how a backtest gets tuned into a result that does not repeat.")
-    print()
+    out()
+    out("Break-even is 55.6% at an 80% payout, 52.4% at 91%.")
+    out("Read the LOWER bound of the interval, never the headline rate: a row")
+    out("showing 60% on 12 trades whose interval reaches down to 32% has not")
+    out("demonstrated anything, and picking the best-looking row from a sweep")
+    out("is how a backtest gets tuned into a result that does not repeat.")
+    out()
+    _save(args)
     return 0
+
+
+def _save(args) -> None:
+    """Write the report where it can be found again."""
+    if args.out:
+        path = Path(args.out)
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        kind = "sweep" if args.sweep else "run"
+        path = Path("backtests") / f"{args.symbol}-{kind}-{stamp}.txt"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(_TRANSCRIPT) + "\n", encoding="utf-8")
+        print(f"Saved to  {path.resolve()}")
+    except Exception as exc:  # noqa: BLE001
+        # Never let a failed write hide a report that was already printed.
+        print(f"(could not save the report: {exc})")
 
 
 if __name__ == "__main__":
