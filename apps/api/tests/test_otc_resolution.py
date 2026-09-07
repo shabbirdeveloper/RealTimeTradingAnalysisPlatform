@@ -181,3 +181,57 @@ class ResolutionScopeTests(unittest.TestCase):
         self.assertIn("def resolve_expired_signals", source)
         self.assertIn("except ValueError", source,
                       "an out-of-scope symbol must be skipped, not allowed to abort the pass")
+
+
+class NotificationTests(unittest.TestCase):
+    """The 5-minute engine must announce its own signals.
+
+    It did not: Telegram was wired only into the OLD engine's storage
+    path, so the only messages arriving were from an engine that had been
+    replaced -- which is why exactly one instrument was notifying.
+    """
+
+    def _decision(self, direction: Direction, broker: str = "DERIV") -> OTCDecision:
+        return OTCDecision(
+            symbol="DERIV_V75", broker=broker, generated_at=NOW,
+            direction=direction,
+            status=SignalStatus.ACTIVE if direction is not Direction.NO_TRADE else SignalStatus.REJECTED,
+            price=500.25, expiry_seconds=300, regime="TRENDING_UP",
+            regime_reason="M5 HH_HL", strategy="trend_pullback",
+            call_score=84, put_score=31,
+            call_categories=CategoryScores(trend=20), put_categories=CategoryScores(),
+            reasons=["M15 and M5 both bullish"], warnings=[],
+        )
+
+    def test_message_names_the_five_minute_expiry(self):
+        from app.notifications.telegram import format_otc_signal
+
+        text = format_otc_signal(self._decision(Direction.CALL))
+        self.assertIn("5 min", text)
+        self.assertIn("CALL", text)
+
+    def test_message_shows_both_sides_not_one_score(self):
+        from app.notifications.telegram import format_otc_signal
+
+        text = format_otc_signal(self._decision(Direction.PUT))
+        self.assertIn("84", text)
+        self.assertIn("31", text)
+
+    def test_broker_generated_series_is_declared(self):
+        """A synthetic index and a real pair can carry similar names. A
+        message that did not say which series it came from would
+        eventually be placed on the wrong instrument."""
+        from app.notifications.telegram import format_otc_signal
+
+        text = format_otc_signal(self._decision(Direction.CALL, broker="DERIV"))
+        self.assertIn("not from any market", text)
+
+        real = format_otc_signal(self._decision(Direction.CALL, broker="MARKET"))
+        self.assertIn("real exchange prices", real)
+
+    def test_no_probability_is_claimed(self):
+        from app.notifications.telegram import format_otc_signal
+
+        text = format_otc_signal(self._decision(Direction.CALL))
+        self.assertIn("not a probability", text)
+        self.assertNotIn("%", text.split("<i>")[0])

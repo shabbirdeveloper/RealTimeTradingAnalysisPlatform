@@ -145,3 +145,70 @@ def notify_new_signal(asset: str, decision: SignalDecision, *, is_otc: bool = Fa
     if not notifier.is_configured:
         return False
     return notifier.send(format_signal(asset, decision, is_otc=is_otc))
+
+
+def format_otc_signal(decision) -> str:
+    """The 5-minute engine's own message.
+
+    A separate formatter rather than an adapter onto SignalDecision,
+    because the two engines carry different evidence and squeezing one
+    into the other's shape would have meant inventing the fields it does
+    not have -- a grade it cannot justify, a session it does not use.
+    What this engine knows is the CALL/PUT pair and which strategy fired,
+    so that is what the message says.
+    """
+    from app.otc.config import TIMEFRAME_SECONDS  # noqa: F401  (kept for symmetry)
+
+    arrow = "↑" if decision.direction.value == "CALL" else "↓"
+    minutes = decision.expiry_seconds // 60
+    lines = [
+        f"<b>{_escape(decision.symbol)} — {decision.direction.value} {arrow}</b>",
+        "",
+        f"Expiry       {minutes} min",
+        f"Entry        {decision.price}",
+        f"Score        {decision.score}/100",
+        f"CALL / PUT   {decision.call_score} / {decision.put_score}",
+        f"Regime       {_escape(decision.regime.replace('_', ' ').lower())}",
+        f"Strategy     {_escape((decision.strategy or '—').replace('_', ' '))}",
+    ]
+
+    if decision.reasons:
+        lines += ["", "<b>Why</b>"]
+        lines += [f"• {_escape(r)}" for r in decision.reasons[:4]]
+
+    if decision.warnings:
+        lines += ["", "<b>Warnings</b>"]
+        lines += [f"! {_escape(w)}" for w in decision.warnings[:3]]
+
+    lines += [
+        "",
+        "<i>Technical score only — no calibrated ML confidence exists yet, so "
+        "this is not a probability. Place manually; this platform never trades "
+        "for you.</i>",
+    ]
+
+    # Which SERIES this was computed from, every time. A broker-generated
+    # index and a real pair can carry similar names, and a message that did
+    # not say which one it meant would eventually be placed on the wrong
+    # instrument -- the exact confusion the provenance work exists to stop.
+    if decision.broker == "MARKET":
+        lines += [
+            "<i>Computed from real exchange prices. Do NOT place this on a "
+            "broker's OTC pair — that is a different, broker-generated series.</i>",
+        ]
+    else:
+        lines += [
+            f"<i>Computed from {_escape(decision.broker)}'s own generated series, "
+            "not from any market. It is not interchangeable with a real pair or "
+            "with another broker's instrument of a similar name.</i>",
+        ]
+    return "\n".join(lines)
+
+
+def notify_otc_signal(decision) -> bool:
+    """Send one 5-minute decision. Returns False when Telegram is not
+    configured, which is a normal state and not an error."""
+    notifier = build_notifier()
+    if not notifier.is_configured:
+        return False
+    return notifier.send(format_otc_signal(decision))

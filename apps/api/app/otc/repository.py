@@ -119,7 +119,30 @@ def store_decision(decision: OTCDecision) -> str | None:
         return None
 
     rows = getattr(result, "data", None) or []
-    return rows[0]["id"] if rows else None
+    signal_id = rows[0]["id"] if rows else None
+
+    # Notify only on a stored SIGNAL. Two conditions, both load-bearing:
+    # a rejected setup is not news, and a decision that failed to store
+    # must not be announced -- a Telegram message for a row that does not
+    # exist is worse than silence, because it will never appear in the
+    # history the message implies it is part of.
+    if signal_id and decision.is_signal:
+        _notify(decision)
+
+    return signal_id
+
+
+def _notify(decision: OTCDecision) -> None:
+    """Best-effort. A notification failure must never look like, or become,
+    a storage failure -- the decision is already safely recorded, and the
+    message is a convenience on top of it."""
+    try:
+        from app.notifications.telegram import notify_otc_signal
+
+        if notify_otc_signal(decision):
+            logger.info("[OTC_SIGNAL] %s %s notified", decision.symbol, decision.direction.value)
+    except Exception:  # noqa: BLE001
+        logger.exception("%s: notification failed", decision.symbol)
 
 
 def _leaning(decision: OTCDecision) -> str:
