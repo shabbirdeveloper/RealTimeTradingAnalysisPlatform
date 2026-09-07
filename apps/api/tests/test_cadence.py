@@ -52,8 +52,12 @@ class BudgetTests(unittest.TestCase):
 
 class CadenceTests(unittest.TestCase):
     def test_forex_is_faster_during_london_and_new_york(self):
+        # The quiet interval was widened from 900 to 1800 to pay for the
+        # 5-minute engine: active hours are where a 300-second expiry is
+        # actually traded, so that is where the budget goes.
         self.assertEqual(interval_seconds("EURUSD", at(10)), 300)
-        self.assertEqual(interval_seconds("EURUSD", at(3)), 900)
+        self.assertEqual(interval_seconds("EURUSD", at(3)), 1800)
+        self.assertGreater(interval_seconds("EURUSD", at(3)), interval_seconds("EURUSD", at(10)))
 
     def test_crypto_cadence_does_not_change_with_the_session(self):
         """Crypto has no London open. Treating it as if it did would spend
@@ -113,3 +117,35 @@ class DueTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BudgetTests(unittest.TestCase):
+    """The free tier does not degrade — it stops answering, and every asset
+    freezes at the same minute. So the configured cadence must be provably
+    inside the budget, not approximately inside it."""
+
+    def test_configured_cadence_fits_the_free_tier(self):
+        from app.collector.cadence import FREE_TIER_REQUESTS_PER_DAY, daily_request_estimate
+
+        symbols = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"]
+        estimate = daily_request_estimate(symbols)
+        self.assertLess(
+            estimate, FREE_TIER_REQUESTS_PER_DAY,
+            f"{estimate:.0f} requests/day exceeds the {FREE_TIER_REQUESTS_PER_DAY}/day tier",
+        )
+
+    def test_five_minute_polling_for_everything_would_not_fit(self):
+        """Documents the bug this guards against: five assets on one
+        five-minute interval costs 1440/day against a tier of 800."""
+        from app.collector.cadence import FREE_TIER_REQUESTS_PER_DAY
+
+        naive = 5 * (24 * 3600 / 300)
+        self.assertGreater(naive, FREE_TIER_REQUESTS_PER_DAY)
+
+    def test_forex_still_gets_five_minutes_when_it_matters(self):
+        from datetime import datetime, timezone
+
+        from app.collector.cadence import interval_seconds
+
+        london = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
+        self.assertEqual(interval_seconds("EURUSD", london), 300)

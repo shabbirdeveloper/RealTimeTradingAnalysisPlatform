@@ -16,12 +16,14 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.collector.cadence import (
+    FREE_TIER_REQUESTS_PER_DAY,
     TICK_SECONDS,
     daily_request_estimate,
     interval_seconds,
     should_poll,
 )
 from app.collector.market_hours import any_market_open, is_market_open
+from app.market_data.errors import RateLimitError
 from app.collector.resolution import resolve_expired_signals, resolve_shadow_opportunities
 from app.otc.collector import run_cycle as run_otc_cycle
 from app.otc.config import CONFIG, REAL_MARKET_PROFILE, TIMEFRAME_SECONDS, enabled_symbols
@@ -185,14 +187,44 @@ async def run_market_engine() -> None:
         return
 
     now = datetime.now(timezone.utc)
-    evaluated, failed = 0, 0
+    evaluated, failed, skipped = 0, 0, 0
+
     for asset in Asset:
+        symbol = asset.value
+        # Per-asset cadence, not one interval for everything. Polling all
+        # five every five minutes costs 1440 requests a day against a free
+        # tier of 800 -- the quota is exhausted around lunchtime and every
+        # asset then fails at once, which is exactly what "all five frozen
+        # at the same minute" looks like from the dashboard.
+        if not should_poll(symbol, now, _last_polled.get(symbol)):
+            skipped += 1
+            continue
         try:
-            await collect_market_symbol(asset.value, provider, now)
+            await collect_market_symbol(symbol, provider, now)
+            _last_polled[symbol] = now
             evaluated += 1
+        except RateLimitError as exc:
+            # Credit exhaustion is not a hiccup and must not read as one.
+            # Stop the cycle: the remaining assets would spend credits the
+            # account does not have and log four more identical failures.
+            failed += 1
+            logger.error(
+                "Twelve Data quota exhausted (%s). No further real-market "
+                "evaluation is possible until it resets. Reduce cadence in "
+                "app/collector/cadence.py or upgrade the plan.", exc,
+            )
+            _heartbeat("Signal Engine (real market)", "Offline",
+                       {"reason": "provider quota exhausted", "evaluated": evaluated})
+            return
         except Exception:  # noqa: BLE001
             failed += 1
-            logger.exception("%s: market engine cycle failed", asset.value)
+            logger.exception("%s: market engine cycle failed", symbol)
+
+    if skipped and not evaluated:
+        # Every asset was simply not due yet. Not a failure, and it must not
+        # overwrite a healthy heartbeat with a worrying one.
+        logger.debug("market engine: nothing due this tick (%d skipped)", skipped)
+        return
 
     _heartbeat(
         "Signal Engine (real market)",
@@ -302,11 +334,24 @@ def start_scheduler() -> AsyncIOScheduler:
             max_instances=1,
             coalesce=True,
         )
+        symbols = [a.value for a in Asset]
+        estimate = daily_request_estimate(symbols)
         logger.info(
-            "5-minute engine started (every %ss) for %s",
-            REAL_MARKET_PROFILE.evaluation_seconds,
-            ", ".join(a.value for a in Asset),
+            "5-minute engine started (tick=%ss, per-asset cadence) for %s",
+            REAL_MARKET_PROFILE.evaluation_seconds, ", ".join(symbols),
         )
+        # Printed every start, because exceeding it does not degrade -- the
+        # provider simply stops answering and every asset freezes at once.
+        logger.info(
+            "estimated provider usage: ~%.0f requests/day of a %d/day free tier",
+            estimate, FREE_TIER_REQUESTS_PER_DAY,
+        )
+        if estimate > FREE_TIER_REQUESTS_PER_DAY:
+            logger.error(
+                "THIS EXCEEDS THE FREE TIER. The quota will run out partway "
+                "through the day and every asset will stop at the same moment. "
+                "Widen the cadence in app/collector/cadence.py."
+            )
     else:
         logger.info(
             "real-market engine disabled -- the broker-OTC engine is the only "

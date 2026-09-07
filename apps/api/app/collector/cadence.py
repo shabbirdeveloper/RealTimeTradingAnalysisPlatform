@@ -47,8 +47,20 @@ class Cadence:
         return self.active_seconds if is_active_hours(now) else self.quiet_seconds
 
 
-FX_CADENCE = Cadence(active_seconds=300, quiet_seconds=900)
-CONTINUOUS_CADENCE = Cadence(active_seconds=1800, quiet_seconds=1800)
+# Sized against FREE_TIER_REQUESTS_PER_DAY, and the arithmetic is the point:
+#
+#   3 FX  x (14h/5min + 10h/30min)  = 564
+#   2 cry x (24h/15min)             = 192
+#                                     ---
+#                                     756  of 800
+#
+# Five minutes during London and New York is where the 5-minute engine
+# earns its keep; the quiet hours are stretched to pay for it. Crypto sits
+# at fifteen because two 24/7 instruments at five-minute cadence alone cost
+# 576 -- more than two thirds of the day's budget for the assets that move
+# least predictably on this horizon.
+FX_CADENCE = Cadence(active_seconds=300, quiet_seconds=1800)
+CONTINUOUS_CADENCE = Cadence(active_seconds=900, quiet_seconds=900)
 
 # The scheduler's own tick. Must divide every cadence above, or an asset
 # whose interval is not a multiple of the tick drifts later each cycle.
