@@ -27,9 +27,13 @@ def bars(last_close: float, at: datetime, count: int = 5):
     ]
 
 
-def row(direction: str, entry: float, expiry: datetime):
+def row(direction: str, entry: float, expiry: datetime, symbol: str | None = "DERIV_V75"):
+    # `assets(symbol)` is the joined shape the query returns. The candle
+    # reader is keyed by symbol, not asset id; passing the id through
+    # silently returned nothing and left every expired signal ACTIVE.
     return {"id": "x", "asset_id": "a", "direction": direction,
-            "entry_price": str(entry), "expiry_at": expiry.isoformat()}
+            "entry_price": str(entry), "expiry_at": expiry.isoformat(),
+            "assets": {"symbol": symbol} if symbol else None}
 
 
 class ScoringTests(unittest.TestCase):
@@ -71,6 +75,23 @@ class ScoringTests(unittest.TestCase):
         bad["entry_price"] = None
         status, _ = _score(bad, NOW, lambda *_: bars(101.0, NOW))
         self.assertEqual(status, SignalStatus.INVALIDATED.value)
+
+    def test_scoring_is_keyed_by_symbol_not_asset_id(self):
+        """Regression: the candle reader takes a symbol. Passing asset_id
+        found no candles, so nothing ever resolved and the backlog looked
+        like a quiet market rather than a broken join."""
+        seen: list[str] = []
+
+        def spy(symbol, *_):
+            seen.append(symbol)
+            return bars(101.0, NOW)
+
+        _score(row("CALL", 100.0, NOW), NOW, spy)
+        self.assertEqual(seen, ["DERIV_V75"])
+
+    def test_missing_symbol_returns_none_rather_than_guessing(self):
+        self.assertIsNone(_score(row("CALL", 100.0, NOW, symbol=None), NOW,
+                                 lambda *_: bars(101.0, NOW)))
 
     def test_fetch_failure_returns_none(self):
         def boom(*_):

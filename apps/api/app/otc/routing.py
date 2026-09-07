@@ -45,9 +45,13 @@ ROUTING: dict[str, tuple[str, ...]] = {
     # An unusually wide range is where rejection setups are cleanest and
     # momentum entries are most likely to be buying the last candle.
     HIGH_VOLATILITY: ("level_rejection",),
-    # A dead tape gives a 5-minute expiry nothing to travel into. Nothing
-    # runs; this is a first-class no-trade, not an oversight.
-    LOW_VOLATILITY: (),
+    # A quiet tape is where rejection setups are cleanest -- price is
+    # respecting levels rather than running through them. Routing it to
+    # nothing was my addition, not the spec's, and it silenced the engine
+    # completely on an instrument whose ATR percentile sits low for long
+    # stretches. The volatility PENALTY inside each strategy is the right
+    # place to express "this is thin", not a blanket regime veto.
+    LOW_VOLATILITY: ("level_rejection",),
     CHOPPY: (),
     UNKNOWN: (),
 }

@@ -107,6 +107,19 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(strategies_for(CHOPPY), [])
         self.assertEqual(strategies_for(UNKNOWN), [])
 
+    def test_only_unreadable_regimes_route_to_nothing(self):
+        """A regime the classifier COULD read must reach a strategy.
+        Routing a readable regime to nothing silences the engine for as
+        long as the market stays in it, and that silence is indis-
+        tinguishable from a quiet market."""
+        from app.otc import regime as R
+        readable = {
+            R.TRENDING_UP, R.TRENDING_DOWN, R.RANGING, R.BREAKOUT,
+            R.PULLBACK, R.HIGH_VOLATILITY, R.LOW_VOLATILITY,
+        }
+        for name in readable:
+            self.assertTrue(strategies_for(name), f"{name} routes to no strategy")
+
     def test_every_regime_has_an_explicit_route(self):
         from app.otc import regime as R
         declared = {

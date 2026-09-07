@@ -81,10 +81,10 @@ async def collect_symbol(symbol: str, feed: DerivSyntheticFeed, now: datetime) -
 
     # Sub-minute bars: nobody sells these, so they are ours to build.
     for timeframe, seconds in TICK_TIMEFRAMES.items():
-        built = ticks_to_candles(ticks, seconds, now=now)
+        built = _validated(symbol, timeframe, ticks_to_candles(ticks, seconds, now=now))
         if built:
             candles[timeframe] = built[-HISTORY_BARS:]
-            _upsert(symbol, timeframe, _as_bars(symbol, timeframe, built[-HISTORY_BARS:], feed.name))
+            _upsert(symbol, timeframe, candles[timeframe], feed.name)
 
     # Minute-and-above bars come from the broker, because its own
     # aggregation is authoritative for its own series and our tick history
@@ -95,7 +95,6 @@ async def collect_symbol(symbol: str, feed: DerivSyntheticFeed, now: datetime) -
         except MarketDataError as exc:
             logger.warning("[OTC_CANDLE] %s: %s unavailable: %s", symbol, timeframe, exc)
             continue
-        _upsert(symbol, timeframe, bars)
         candles[timeframe] = [
             {
                 "open_time": b.open_time, "open": b.open, "high": b.high,
@@ -103,6 +102,7 @@ async def collect_symbol(symbol: str, feed: DerivSyntheticFeed, now: datetime) -
             }
             for b in bars
         ]
+        _upsert(symbol, timeframe, candles[timeframe], feed.name)
 
     logger.info(
         "[OTC_CANDLE] %s %s",
@@ -120,43 +120,51 @@ async def collect_symbol(symbol: str, feed: DerivSyntheticFeed, now: datetime) -
         )
     else:
         logger.info(
-            "[OTC_SCORE] %s NO_TRADE regime=%s call=%d put=%d — %s",
-            symbol, decision.regime, decision.call_score, decision.put_score,
+            "[OTC_SCORE] %s NO_TRADE regime=%s (%s) call=%d put=%d — %s",
+            symbol, decision.regime, decision.regime_reason or "no reason recorded",
+            decision.call_score, decision.put_score,
             "; ".join(decision.rejection_reasons[:2]) or "no reason recorded",
         )
 
     store_decision(decision)
 
 
-def _as_bars(symbol: str, timeframe: str, rows: list[dict], source: str) -> list:
-    """Wrap our own tick-built candles in OTCBar so they go through the
-    same validation the broker's bars do -- OTCBar refuses a bar whose
-    open or close lies outside its own high/low, which is exactly the
-    corruption a bucketing bug produces."""
+def _validated(symbol: str, timeframe: str, rows: list[dict]) -> list[dict]:
+    """Drop bars whose own OHLC is self-contradictory before storing them.
+
+    OTCBar refuses a bar whose open or close lies outside its high/low --
+    exactly the corruption a bucketing bug produces. Running our tick-built
+    candles through that constructor gets the same check the broker's bars
+    already get; the validated rows are returned as dicts because that is
+    what the storage layer takes.
+    """
     from app.market_data.otc import OTCBar
 
-    out = []
+    out: list[dict] = []
     for r in rows:
         try:
-            out.append(OTCBar(
+            OTCBar(
                 symbol=symbol, open_time=r["open_time"], timeframe=timeframe,
                 open=float(r["open"]), high=float(r["high"]), low=float(r["low"]),
-                close=float(r["close"]), is_closed=True, source=source,
-                tick_count=r.get("tick_count"),
-            ))
+                close=float(r["close"]), is_closed=True, source="tick_builder",
+            )
         except ValueError as exc:
             logger.warning("[OTC_CANDLE] %s %s malformed bar dropped: %s", symbol, timeframe, exc)
+            continue
+        out.append(r)
     return out
 
 
-def _upsert(symbol: str, timeframe: str, bars) -> None:
-    """Persist bars, deferring the storage import so that this module --
+def _upsert(symbol: str, timeframe: str, rows: list[dict], source: str) -> None:
+    """Persist bars. The storage import is deferred so that this module --
     and the health derivation below it -- can be imported and tested
     without pydantic or database credentials present."""
     from app.storage.candle_repository import upsert_otc_candles
 
+    if not rows:
+        return
     try:
-        upsert_otc_candles(symbol, timeframe, bars)
+        upsert_otc_candles(symbol, timeframe, rows, source=source)
     except Exception as exc:
         logger.warning("[OTC_CANDLE] %s: %s storage failed: %s", symbol, timeframe, exc)
 

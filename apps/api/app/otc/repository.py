@@ -84,7 +84,13 @@ def store_decision(decision: OTCDecision) -> str | None:
         # being filled with the technical score wearing a different name.
         "raw_probability": None,
         "calibrated_confidence": None,
-        "grade": None,
+        # NOT NULL, and its vocabulary is a probability claim: A++ means
+        # 90%+ CONFIDENCE, which requires a calibrated model we do not have
+        # (spec sections 10 and 45). So every signal is graded B -- the
+        # floor -- and the technical score beside it carries the quality.
+        # Deriving A++ from a technical score would be exactly the "never
+        # fake 90%" the spec forbids, dressed as a lookup table.
+        "grade": "B" if decision.is_signal else "REJECTED",
         "market_regime": decision.regime,
         "strategy_version": STRATEGY_VERSION,
         "data_source": decision.broker,
@@ -175,9 +181,13 @@ def resolve_due_signals(now: datetime | None = None) -> int:
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     try:
         client = get_service_client()
+        # The symbol is joined in because the candle reader is keyed by
+        # symbol, not asset id. Passing the id straight through returned no
+        # candles and every expired signal stayed ACTIVE forever -- silence
+        # that looks exactly like "nothing has expired yet".
         result = (
             client.table("signals")
-            .select("id, asset_id, direction, entry_price, expiry_at")
+            .select("id, asset_id, direction, entry_price, expiry_at, assets(symbol)")
             .eq("status", SignalStatus.ACTIVE.value)
             .eq("market_type", "BROKER_OTC")
             .lte("expiry_at", now.isoformat())
@@ -220,8 +230,12 @@ def _score(row: dict, now: datetime, fetch) -> tuple[str, float | None] | None:
     if entry is None:
         return (SignalStatus.INVALIDATED.value, None)
 
+    asset = row.get("assets") or {}
+    symbol = asset.get("symbol") if isinstance(asset, dict) else None
+    if not symbol:
+        return None
     try:
-        candles = fetch(row["asset_id"], "S15", 400)
+        candles = fetch(symbol, "S15", 400)
     except Exception:
         return None
 
