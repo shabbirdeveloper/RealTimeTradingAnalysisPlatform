@@ -15,6 +15,7 @@ until the deterministic path has been shown to carry an edge.
 
 from __future__ import annotations
 
+from app.otc.config import OTC_PROFILE, EngineProfile
 from app.otc.features import MarketContext, TimeframeFeatures
 
 TRENDING_UP = "TRENDING_UP"
@@ -37,24 +38,24 @@ _HIGH_VOL_PCT = 85.0
 _LOW_VOL_PCT = 15.0
 
 
-def classify(context: MarketContext) -> tuple[str, str]:
+def classify(context: MarketContext, profile: EngineProfile = OTC_PROFILE) -> tuple[str, str]:
     """Return (regime, one-line reason). The reason is stored with every
     decision so a rejected setup can be explained months later without
     re-deriving it."""
-    structure = context.frame("M5")
-    momentum = context.frame("M3")
+    structure = context.frame(profile.structure)
+    momentum = context.frame(profile.momentum)
 
     if structure is None or not structure.ready:
-        return UNKNOWN, "M5 features have not converged"
+        return UNKNOWN, f"{profile.structure} features have not converged"
 
     # Volatility first: an extreme reading overrides directional reads,
     # because a strategy calibrated for normal range behaves differently
     # when the range has tripled.
     if structure.atr_pct is not None:
         if structure.atr_pct >= _HIGH_VOL_PCT:
-            return HIGH_VOLATILITY, f"M5 ATR in the {structure.atr_pct:.0f}th percentile"
+            return HIGH_VOLATILITY, f"{profile.structure} ATR in the {structure.atr_pct:.0f}th percentile"
         if structure.atr_pct <= _LOW_VOL_PCT:
-            return LOW_VOLATILITY, f"M5 ATR in the {structure.atr_pct:.0f}th percentile"
+            return LOW_VOLATILITY, f"{profile.structure} ATR in the {structure.atr_pct:.0f}th percentile"
 
     sep = structure.ema_separation
     seq = structure.structure.sequence
@@ -66,7 +67,7 @@ def classify(context: MarketContext) -> tuple[str, str]:
         return CHOPPY, "EMAs entangled with no structural sequence"
 
     if sep is None or seq is None:
-        return UNKNOWN, "insufficient structure or EMA data on M5"
+        return UNKNOWN, f"insufficient structure or EMA data on {profile.structure}"
 
     trending_up = sep >= _TREND_SEPARATION and seq == "HH_HL"
     trending_down = sep <= -_TREND_SEPARATION and seq == "LH_LL"
@@ -77,16 +78,16 @@ def classify(context: MarketContext) -> tuple[str, str]:
         # confirming, is an expansion rather than a continuation -- and the
         # two want different strategies.
         if bos and _momentum_agrees(momentum, up=trending_up):
-            return BREAKOUT, f"M5 {seq} with break of structure and M3 momentum agreeing"
+            return BREAKOUT, f"{profile.structure} {seq} with break of structure and {profile.momentum} momentum agreeing"
         # Price back inside the fast EMA while the trend structure holds is
         # the pullback the trend-continuation strategy is built for.
         pull = structure.price_vs_ema21
         if pull is not None and ((trending_up and pull < 0.2) or (trending_down and pull > -0.2)):
-            return PULLBACK, f"M5 {seq} with price retraced to EMA21"
-        return direction, f"M5 {seq}, EMA separation {sep:+.2f} ATR"
+            return PULLBACK, f"{profile.structure} {seq} with price retraced to EMA21"
+        return direction, f"{profile.structure} {seq}, EMA separation {sep:+.2f} ATR"
 
     if seq == "MIXED" or abs(sep) < _TREND_SEPARATION:
-        return RANGING, f"no sustained direction on M5 (separation {sep:+.2f} ATR)"
+        return RANGING, f"no sustained direction on {profile.structure} (separation {sep:+.2f} ATR)"
 
     return UNKNOWN, "regime rules did not match"
 

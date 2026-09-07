@@ -262,3 +262,46 @@ class DeterminismTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProfileTests(unittest.TestCase):
+    """The two data sources publish different timeframes, and the engine
+    must not pretend otherwise. A quote vendor has no sub-minute bars, so
+    an engine that asked for S30 and proceeded without it would be scoring
+    entry timing on evidence it never had."""
+
+    def test_real_market_profile_has_no_sub_minute_timeframes(self):
+        from app.otc.config import REAL_MARKET_PROFILE
+        for tf in REAL_MARKET_PROFILE.timeframes:
+            self.assertFalse(tf.startswith("S"), f"{tf} cannot come from a quote vendor")
+
+    def test_real_market_entry_timeframe_is_m1(self):
+        from app.otc.config import REAL_MARKET_PROFILE
+        self.assertEqual(REAL_MARKET_PROFILE.entry, "M1")
+
+    def test_both_profiles_share_the_five_minute_expiry(self):
+        from app.otc.config import OTC_PROFILE, REAL_MARKET_PROFILE
+        self.assertEqual(OTC_PROFILE.expiry_seconds, 300)
+        self.assertEqual(REAL_MARKET_PROFILE.expiry_seconds, 300)
+
+    def test_profile_is_chosen_by_symbol(self):
+        from app.otc.config import OTC_PROFILE, REAL_MARKET_PROFILE, profile_for
+        self.assertIs(profile_for("DERIV_V75"), OTC_PROFILE)
+        self.assertIs(profile_for("EURUSD"), REAL_MARKET_PROFILE)
+
+    def test_real_market_market_runs_without_sub_minute_data(self):
+        """The whole point: the same engine, on four timeframes, reaches a
+        decision instead of failing warm-up on a missing S30."""
+        from app.otc.config import REAL_MARKET_PROFILE
+        market = {tf: make_series(200, TIMEFRAME_SECONDS[tf], drift=0.2)
+                  for tf in REAL_MARKET_PROFILE.timeframes}
+        decision = evaluate("EURUSD", market, NOW, healthy(), REAL_MARKET_PROFILE)
+        self.assertNotIn("S30", " ".join(decision.rejection_reasons))
+        self.assertEqual(decision.expiry_seconds, 300)
+
+    def test_every_derived_timeframe_is_a_whole_multiple_of_m1(self):
+        """M3 and M1 cannot be built from M5, which is why the collector
+        fetches M1 and aggregates upward."""
+        from app.otc.config import REAL_MARKET_PROFILE
+        for tf in REAL_MARKET_PROFILE.timeframes:
+            self.assertEqual(TIMEFRAME_SECONDS[tf] % 60, 0, f"{tf} is not a whole minute")

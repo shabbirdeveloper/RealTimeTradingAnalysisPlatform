@@ -34,3 +34,18 @@ class MarketDataProvider(ABC):
         oldest first. Raises MarketDataError on any failure -- never
         returns a partial/best-effort result silently."""
         raise NotImplementedError
+
+    async def fetch_latest_m1(self, asset: Asset, outputsize: int) -> list[Candle]:
+        """Most recent `outputsize` M1 candles, oldest first.
+
+        Not abstract: a provider whose finest interval is five minutes is a
+        legitimate provider, and it should fail LOUDLY here rather than be
+        forced to return M5 bars mislabelled as M1. The 5-minute engine
+        needs genuine one-minute bars for its entry timeframe, and silently
+        handing it coarser ones would let it score entry timing on evidence
+        that does not exist.
+        """
+        raise MarketDataError(
+            f"{self.name} does not publish one-minute candles; the 5-minute "
+            "engine needs them for its entry timeframe."
+        )

@@ -27,7 +27,7 @@ from app.market_data.deriv_feed import (
     ticks_to_candles,
 )
 from app.market_data.errors import MarketDataError
-from app.otc.config import CONFIG, OTC_SYMBOLS, enabled_symbols
+from app.otc.config import CONFIG, OTC_PROFILE, OTC_SYMBOLS, enabled_symbols
 from app.otc.engine import evaluate
 from app.otc.health import FeedStatus, MarketDataHealth, assess
 from app.otc.repository import resolve_due_signals, store_decision
@@ -109,7 +109,7 @@ async def collect_symbol(symbol: str, feed: DerivSyntheticFeed, now: datetime) -
         symbol, " ".join(f"{tf}:{len(c)}" for tf, c in sorted(candles.items())),
     )
 
-    decision = evaluate(symbol, candles, now, health)
+    decision = evaluate(symbol, candles, now, health, OTC_PROFILE)
 
     if decision.is_signal:
         logger.info(

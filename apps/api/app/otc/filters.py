@@ -10,7 +10,7 @@ it not signal?" is the question this project asks most.
 
 from __future__ import annotations
 
-from app.otc.config import CONFIG
+from app.otc.config import CONFIG, EngineProfile, OTC_PROFILE
 from app.otc.features import MarketContext
 from app.otc.regime import NO_TRADE_REGIMES
 from app.otc.strategies.base import StrategyVerdict
@@ -20,11 +20,11 @@ from app.otc.strategies.base import StrategyVerdict
 _SPIKE_ATR = 1.8
 
 
-def warmup_failures(context: MarketContext) -> list[str]:
+def warmup_failures(context: MarketContext, profile: EngineProfile = OTC_PROFILE) -> list[str]:
     """Timeframes whose indicators have not converged. An EMA50 computed
     from 20 bars is arithmetic, not evidence."""
     problems: list[str] = []
-    for timeframe in ("M15", "M5", "M3", "M1"):
+    for timeframe in profile.required:
         frame = context.frame(timeframe)
         if frame is None:
             problems.append(f"{timeframe} candles missing")
@@ -69,7 +69,9 @@ def scoring_failures(verdict: StrategyVerdict) -> list[str]:
     return problems
 
 
-def entry_timing_failures(context: MarketContext, direction: str) -> list[str]:
+def entry_timing_failures(
+    context: MarketContext, direction: str, profile: EngineProfile = OTC_PROFILE
+) -> list[str]:
     """Phase 25. A correct direction entered one candle too late loses just
     as completely as a wrong one, and on a 300-second expiry there is no
     time to recover from it.
@@ -78,8 +80,8 @@ def entry_timing_failures(context: MarketContext, direction: str) -> list[str]:
     candle, or a PUT after a large bearish one. That candle is the move.
     """
     problems: list[str] = []
-    entry = context.frame("S30") or context.frame("M1")
-    structure = context.frame("M5")
+    entry = context.frame(profile.entry)
+    structure = context.frame(profile.structure)
     if entry is None or entry.shape is None or structure is None or not structure.atr:
         return ["entry timeframe unavailable"]
 

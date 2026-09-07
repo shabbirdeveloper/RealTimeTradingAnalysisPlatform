@@ -32,7 +32,7 @@ from app.features.indicators import (
 from app.features.levels import Zone, find_zones
 from app.features.price_action import CandleShape, SequenceReading, patterns, sequence, shape_of
 from app.features.structure import StructureReading, classify_structure
-from app.otc.config import TIMEFRAMES
+from app.otc.config import OTC_PROFILE, EngineProfile, TIMEFRAMES
 
 
 @dataclass(frozen=True)
@@ -156,13 +156,17 @@ class MarketContext:
     price: float
     frames: dict[str, TimeframeFeatures]
     regime: str
+    profile: EngineProfile = OTC_PROFILE
 
     def frame(self, timeframe: str) -> TimeframeFeatures | None:
         return self.frames.get(timeframe)
 
     @property
     def missing_timeframes(self) -> list[str]:
-        return [tf for tf in TIMEFRAMES if tf not in self.frames or not self.frames[tf].ready]
+        return [
+            tf for tf in self.profile.timeframes
+            if tf not in self.frames or not self.frames[tf].ready
+        ]
 
 
 def build_context(
@@ -171,12 +175,19 @@ def build_context(
     candles_by_timeframe: dict[str, list[dict]],
     *,
     regime: str = "UNKNOWN",
+    profile: EngineProfile = OTC_PROFILE,
 ) -> MarketContext:
     frames = {
         tf: build_timeframe(tf, candles)
         for tf, candles in candles_by_timeframe.items()
         if candles
     }
-    entry = frames.get("S30") or frames.get("M1")
+    # Price comes from the profile's entry timeframe, which is the finest
+    # bar this data source actually publishes. Falling back to a coarser
+    # one would quote an entry from a bar that closed minutes ago.
+    entry = frames.get(profile.entry)
     price = entry.price if entry and entry.price is not None else 0.0
-    return MarketContext(symbol=symbol, now=now, price=price, frames=frames, regime=regime)
+    return MarketContext(
+        symbol=symbol, now=now, price=price, frames=frames,
+        regime=regime, profile=profile,
+    )

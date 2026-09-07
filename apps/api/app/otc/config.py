@@ -93,6 +93,60 @@ class OTCEngineConfig:
 
 CONFIG = OTCEngineConfig()
 
+
+@dataclass(frozen=True)
+class EngineProfile:
+    """Which timeframes an instrument class actually has.
+
+    Broker feeds publish ticks, so sub-minute bars can be built. Public
+    quote vendors do not -- Twelve Data's floor is one minute -- so the
+    real-market profile has no S30 to time entries on and uses M1 instead.
+
+    This is a profile rather than a runtime `if` because the difference is
+    a property of the DATA SOURCE, not of the moment. An engine that asks
+    for S30 and quietly proceeds without it would be scoring entry timing
+    on evidence it never had, and would report the same confidence for it.
+    """
+
+    name: str
+    timeframes: tuple[str, ...]
+    context: str
+    structure: str
+    momentum: str
+    confirmation: str
+    entry: str
+    expiry_seconds: int = 300
+    evaluation_seconds: int = 30
+
+    @property
+    def required(self) -> tuple[str, ...]:
+        """Timeframes that must have converged before anything is scored."""
+        return (self.context, self.structure, self.momentum, self.confirmation)
+
+
+# Tick feed available: the full six timeframes of Phase 8.
+OTC_PROFILE = EngineProfile(
+    name="broker_otc",
+    timeframes=("S15", "S30", "M1", "M3", "M5", "M15"),
+    context="M15", structure="M5", momentum="M3", confirmation="M1", entry="S30",
+    expiry_seconds=300, evaluation_seconds=30,
+)
+
+# Quote vendor, one-minute floor. Same five-minute expiry and the same
+# strategies; entry timing reads M1 because nothing finer exists. Evaluated
+# every five minutes because that is both the provider's practical budget
+# and the rate at which the entry bar actually changes.
+REAL_MARKET_PROFILE = EngineProfile(
+    name="public_market",
+    timeframes=("M1", "M3", "M5", "M15"),
+    context="M15", structure="M5", momentum="M3", confirmation="M1", entry="M1",
+    expiry_seconds=300, evaluation_seconds=300,
+)
+
+
+def profile_for(symbol: str) -> EngineProfile:
+    return OTC_PROFILE if symbol in OTC_SYMBOLS else REAL_MARKET_PROFILE
+
 # The six timeframes of Phase 8 and no others, ordered fastest-first to
 # match schemas.candle.Timeframe. Each has one job; a seventh would need to
 # justify itself against an existing one.

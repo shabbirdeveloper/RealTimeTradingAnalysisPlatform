@@ -24,7 +24,8 @@ from app.collector.cadence import (
 from app.collector.market_hours import any_market_open, is_market_open
 from app.collector.resolution import resolve_expired_signals, resolve_shadow_opportunities
 from app.otc.collector import run_cycle as run_otc_cycle
-from app.otc.config import CONFIG, TIMEFRAME_SECONDS, enabled_symbols
+from app.otc.config import CONFIG, REAL_MARKET_PROFILE, TIMEFRAME_SECONDS, enabled_symbols
+from app.otc.market_collector import collect_market_symbol
 from app.collector.service import run_poll_cycle
 from app.config import get_settings
 from app.market_data.base import MarketDataProvider
@@ -144,6 +145,32 @@ async def run_all_assets(*, force: bool = False) -> None:
         )
 
 
+async def run_market_engine() -> None:
+    """The 5-minute engine over every real-market instrument.
+
+    Wrapped per asset: one instrument whose quote request fails must not
+    stop the other four, because a single provider hiccup should cost one
+    evaluation rather than the whole cycle.
+    """
+    settings = get_settings()
+    if not settings.has_supabase:
+        logger.warning("SUPABASE not configured -- skipping market engine cycle")
+        return
+
+    try:
+        provider = build_provider()
+    except Exception:  # noqa: BLE001
+        logger.exception("no market-data provider available")
+        return
+
+    now = datetime.now(timezone.utc)
+    for asset in Asset:
+        try:
+            await collect_market_symbol(asset.value, provider, now)
+        except Exception:  # noqa: BLE001
+            logger.exception("%s: market engine cycle failed", asset.value)
+
+
 async def run_resolution() -> None:
     """Score signals whose expiry has passed (spec section 49).
 
@@ -220,17 +247,25 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler = AsyncIOScheduler(timezone="UTC")
     tick = TICK_SECONDS if settings.adaptive_polling else settings.poll_interval_seconds
     if settings.public_market_collector_enabled:
+        # The SAME 5-minute engine as the broker feed, on the real pairs.
+        # Every five minutes, which is both the provider's practical budget
+        # and the rate at which the M1 entry bar meaningfully changes.
         _scheduler.add_job(
-            run_all_assets,
+            run_market_engine,
             "interval",
-            seconds=tick,
-            id="market_data_poll",
+            seconds=REAL_MARKET_PROFILE.evaluation_seconds,
+            id="market_engine",
             max_instances=1,
             coalesce=True,
         )
+        logger.info(
+            "5-minute engine started (every %ss) for %s",
+            REAL_MARKET_PROFILE.evaluation_seconds,
+            ", ".join(a.value for a in Asset),
+        )
     else:
         logger.info(
-            "public-market collector disabled -- the OTC engine is the only "
+            "real-market engine disabled -- the broker-OTC engine is the only "
             "engine running (PUBLIC_MARKET_COLLECTOR_ENABLED=true to re-enable)"
         )
     if settings.heartbeat_enabled:

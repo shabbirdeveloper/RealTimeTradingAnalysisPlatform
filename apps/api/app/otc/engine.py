@@ -21,7 +21,7 @@ import hashlib
 import logging
 from datetime import datetime
 
-from app.otc.config import CONFIG, OTC_SYMBOLS
+from app.otc.config import CONFIG, OTC_SYMBOLS, EngineProfile, profile_for
 from app.otc.features import build_context
 from app.otc.filters import (
     entry_timing_failures,
@@ -43,13 +43,15 @@ def evaluate(
     candles_by_timeframe: dict[str, list[dict]],
     now: datetime,
     health: MarketDataHealth,
+    profile: EngineProfile | None = None,
 ) -> OTCDecision:
     """One evaluation. Always returns a decision -- never None, never an
     exception for ordinary market conditions. A rejected setup is a
     first-class result carrying its full evidence (Phase 32)."""
+    profile = profile or profile_for(symbol)
     cfg = OTC_SYMBOLS.get(symbol)
-    broker = cfg.broker if cfg else "UNKNOWN"
-    expiry = cfg.expiry_seconds if cfg else CONFIG.expiry_seconds
+    broker = cfg.broker if cfg else "MARKET"
+    expiry = cfg.expiry_seconds if cfg else profile.expiry_seconds
 
     def reject(reasons: list[str], *, context=None, verdict=None, regime=UNKNOWN, regime_reason="") -> OTCDecision:
         call = verdict.call if verdict else SideScore()
@@ -73,14 +75,14 @@ def evaluate(
         return reject([f"feed {health.status.value}: {health.reason}"])
 
     # --- 2. context and warmup
-    context = build_context(symbol, now, candles_by_timeframe)
-    warm = warmup_failures(context)
+    context = build_context(symbol, now, candles_by_timeframe, profile=profile)
+    warm = warmup_failures(context, profile)
     if warm:
         return reject(warm, context=context)
 
     # --- 3. regime
-    regime, regime_reason = classify(context)
-    context = build_context(symbol, now, candles_by_timeframe, regime=regime)
+    regime, regime_reason = classify(context, profile)
+    context = build_context(symbol, now, candles_by_timeframe, regime=regime, profile=profile)
     bad_regime = regime_failures(context)
     if bad_regime:
         return reject(bad_regime, context=context, regime=regime, regime_reason=regime_reason)
@@ -109,7 +111,7 @@ def evaluate(
     assert direction is not None  # scoring_failures rejects a tie
 
     # --- 6. entry timing
-    timing = entry_timing_failures(context, direction)
+    timing = entry_timing_failures(context, direction, profile)
     if timing:
         return reject(timing, context=context, verdict=verdict, regime=regime, regime_reason=regime_reason)
 

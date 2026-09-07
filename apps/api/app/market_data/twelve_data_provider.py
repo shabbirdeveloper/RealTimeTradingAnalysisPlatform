@@ -50,7 +50,19 @@ class TwelveDataProvider(MarketDataProvider):
         self._timeout = timeout_seconds
 
     async def fetch_latest_m5(self, asset: Asset, outputsize: int) -> list[Candle]:
-        return await self._fetch_m5(asset, outputsize)
+        return await self._fetch(asset, "5min", outputsize)
+
+    async def fetch_latest_m1(self, asset: Asset, outputsize: int) -> list[Candle]:
+        """One-minute bars, the vendor's finest interval.
+
+        The 5-minute engine needs M1 as its confirmation AND entry
+        timeframe, and M3 cannot be built from M5 -- a three-minute bar is
+        not a whole number of five-minute bars. Fetching M1 instead of M5
+        and aggregating M3/M5/M15 upward keeps the cost at ONE request per
+        asset per cycle, which is what the free tier's 800/day budget
+        depends on.
+        """
+        return await self._fetch(asset, "1min", outputsize)
 
     async def fetch_m5_before(
         self, asset: Asset, end_time: datetime, outputsize: int
@@ -62,15 +74,20 @@ class TwelveDataProvider(MarketDataProvider):
         never silently reach into the past, and a backfill page returning
         nothing means "history ends here", not "the feed is broken".
         """
-        return await self._fetch_m5(asset, outputsize, end_time=end_time)
+        return await self._fetch(asset, "5min", outputsize, end_time=end_time)
 
-    async def _fetch_m5(
-        self, asset: Asset, outputsize: int, *, end_time: datetime | None = None
+    async def _fetch(
+        self,
+        asset: Asset,
+        interval: str,
+        outputsize: int,
+        *,
+        end_time: datetime | None = None,
     ) -> list[Candle]:
         symbol = _SYMBOL_MAP[asset]
         params = {
             "symbol": symbol,
-            "interval": "5min",
+            "interval": interval,
             "outputsize": str(outputsize),
             # Force UTC so open_time never depends on the exchange's local
             # timezone -- naive/ambiguous timestamps are exactly the kind
