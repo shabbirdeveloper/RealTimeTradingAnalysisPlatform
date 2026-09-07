@@ -151,24 +151,65 @@ async def run_market_engine() -> None:
     Wrapped per asset: one instrument whose quote request fails must not
     stop the other four, because a single provider hiccup should cost one
     evaluation rather than the whole cycle.
+
+    Records a heartbeat whatever happens. A cycle that ran and declined
+    everything, and a cycle that never ran at all, are indistinguishable
+    from the decisions table -- both leave it unchanged -- and they need
+    opposite responses. The heartbeat is what separates them, so it is
+    written even when the cycle fails.
     """
     settings = get_settings()
     if not settings.has_supabase:
         logger.warning("SUPABASE not configured -- skipping market engine cycle")
         return
 
+    if not settings.has_real_provider:
+        # Distinct from a feed hiccup, and it must not read as one. The
+        # demo provider publishes no one-minute bars, so EVERY asset fails
+        # identically and forever -- five warnings a cycle that look
+        # transient but never clear.
+        logger.error(
+            "TWELVE_DATA_API_KEY is not set. The 5-minute engine needs real "
+            "one-minute candles and the demo provider has none, so NO real-market "
+            "decision can be produced until the key is set in apps/api/.env."
+        )
+        _heartbeat("Signal Engine (real market)", "Offline",
+                   {"reason": "TWELVE_DATA_API_KEY not set", "evaluated": 0})
+        return
+
     try:
         provider = build_provider()
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.exception("no market-data provider available")
+        _heartbeat("Signal Engine (real market)", "Offline", {"reason": str(exc)[:200]})
         return
 
     now = datetime.now(timezone.utc)
+    evaluated, failed = 0, 0
     for asset in Asset:
         try:
             await collect_market_symbol(asset.value, provider, now)
+            evaluated += 1
         except Exception:  # noqa: BLE001
+            failed += 1
             logger.exception("%s: market engine cycle failed", asset.value)
+
+    _heartbeat(
+        "Signal Engine (real market)",
+        "Healthy" if failed == 0 else ("Warning" if evaluated else "Offline"),
+        {"evaluated": evaluated, "failed": failed, "interval_seconds": REAL_MARKET_PROFILE.evaluation_seconds},
+    )
+
+
+def _heartbeat(component: str, status: str, details: dict) -> None:
+    """Best-effort. A failed heartbeat must never take down the cycle it is
+    only describing."""
+    try:
+        from app.storage.health_repository import report_component_health
+
+        report_component_health(component, status=status, details=details)
+    except Exception:  # noqa: BLE001
+        logger.debug("heartbeat write failed for %s", component, exc_info=True)
 
 
 async def run_resolution() -> None:
@@ -237,8 +278,11 @@ async def run_otc_assets() -> None:
         return
     try:
         await run_otc_cycle(DerivSyntheticFeed(settings.deriv_app_id))
-    except Exception:  # noqa: BLE001
+        _heartbeat("Signal Engine (broker OTC)", "Healthy",
+                   {"symbols": enabled_symbols(), "interval_seconds": OTC_TICK_SECONDS})
+    except Exception as exc:  # noqa: BLE001
         logger.exception("OTC cycle failed")
+        _heartbeat("Signal Engine (broker OTC)", "Offline", {"reason": str(exc)[:200]})
 
 
 def start_scheduler() -> AsyncIOScheduler:

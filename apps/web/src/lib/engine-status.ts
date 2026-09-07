@@ -34,3 +34,49 @@ export function staleNoteForRealMarket(): string {
     ? "engine may be stopped"
     : "real-market collector is switched off";
 }
+
+export interface EngineHeartbeat {
+  component: string;
+  status: string;
+  lastCheckedAt: string;
+  details: Record<string, unknown>;
+  ageSeconds: number;
+}
+
+/**
+ * Whether the engine has actually run recently.
+ *
+ * "Engine may be stopped" was a GUESS, inferred from a decision being old.
+ * It is wrong in both directions: an engine that runs every cycle and
+ * declines every setup looks stopped, and an engine that genuinely died
+ * looks merely quiet. Both readings have cost hours in this project.
+ *
+ * The engine now records a heartbeat every cycle, whatever the outcome —
+ * including when the cycle FAILED, because "ran and declined everything"
+ * and "never ran" leave the decisions table looking identical and need
+ * opposite responses. This reads that row, so the page can state which
+ * happened instead of inferring it.
+ */
+export async function getEngineHeartbeats(): Promise<EngineHeartbeat[]> {
+  try {
+    const { createClient } = await import("@/lib/supabase/server");
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("system_health")
+      .select("component, status, details, last_checked_at")
+      .like("component", "Signal Engine%");
+
+    if (error || !data) return [];
+
+    const now = Date.now();
+    return (data as Array<Record<string, unknown>>).map((r) => ({
+      component: String(r.component),
+      status: String(r.status),
+      lastCheckedAt: String(r.last_checked_at),
+      details: (r.details as Record<string, unknown>) ?? {},
+      ageSeconds: Math.max(0, Math.round((now - new Date(String(r.last_checked_at)).getTime()) / 1000)),
+    }));
+  } catch {
+    return [];
+  }
+}

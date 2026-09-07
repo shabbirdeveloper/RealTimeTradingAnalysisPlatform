@@ -9,7 +9,8 @@ import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
 import { getLatestSignals, getLastEvaluationTimes, getLatestOtcSignals } from "@/lib/signals";
 import { OtcSection } from "@/components/dashboard/otc-section";
 import { OtcWarning } from "@/components/shared/otc-warning";
-import { publicMarketCollectorEnabled } from "@/lib/engine-status";
+import { getEngineHeartbeats, publicMarketCollectorEnabled } from "@/lib/engine-status";
+import { EngineHeartbeatBanner } from "@/components/dashboard/engine-heartbeat";
 import { PauseCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AssetSymbol, Signal } from "@/types";
@@ -37,6 +38,7 @@ export default async function DashboardHomePage() {
   // Counted in SQL. The full breakdown lives on /dashboard/performance,
   // which is where the cost of fetching every resolved row belongs.
   const summary = await getPerformanceCounts();
+  const heartbeats = await getEngineHeartbeats();
   const wins = summary?.wins ?? 0;
   const losses = summary?.losses ?? 0;
   const decided = wins + losses;
@@ -123,6 +125,8 @@ export default async function DashboardHomePage() {
           }
         />
       </div>
+
+      <EngineHeartbeatBanner beats={heartbeats} />
 
       {!publicMarketCollectorEnabled() && (
         /* Without this the five cards below simply go stale and the page
