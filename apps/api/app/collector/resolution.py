@@ -73,7 +73,18 @@ def resolve_expired_signals() -> int:
         symbol = symbol_by_id.get(row["asset_id"])
         if symbol is None or row["entry_price"] is None:
             continue
-        asset = Asset(symbol)
+
+        # Broker-OTC instruments are absent from the Asset enum by design
+        # (see schemas/candle.py) and are resolved by app.otc.repository
+        # against their own series. Passing one to Asset() raises
+        # ValueError, and because that happened INSIDE the loop it aborted
+        # the whole pass -- so a single Deriv row left every real-market
+        # signal unresolved and sitting ACTIVE indefinitely. One
+        # out-of-scope row must never decide the fate of the rest.
+        try:
+            asset = Asset(symbol)
+        except ValueError:
+            continue
         expiry_at = datetime.fromisoformat(row["expiry_at"])
 
         found = fetch_first_candle_at_or_after(asset, Timeframe.M5, expiry_at)

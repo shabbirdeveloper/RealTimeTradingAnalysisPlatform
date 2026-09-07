@@ -143,18 +143,34 @@ async def run_all_assets(*, force: bool = False) -> None:
             settings.poll_interval_seconds,
         )
 
-    # Signal resolution (spec section 49) -- checks real candles against
-    # any ACTIVE signal whose expiry has passed. Reads already-stored
-    # data only, no provider calls, so it's safe and cheap to run every
-    # cycle regardless of how many (if any) new candles just came in.
+
+async def run_resolution() -> None:
+    """Score signals whose expiry has passed (spec section 49).
+
+    Its OWN job, not a tail-call at the end of a collector.
+
+    It used to run inside run_all_assets, which meant switching the
+    public-market collector off silently switched off resolution for
+    everything -- every expired signal simply stayed ACTIVE, and a growing
+    backlog of unresolved rows reads exactly like a quiet market rather
+    than a broken one.
+
+    Resolution is not collection. It makes no provider calls, reads only
+    stored data, and matters just as much when nothing is being collected:
+    an expired signal deserves an honest outcome regardless of what the
+    feeds are doing.
+    """
+    settings = get_settings()
+    if not settings.has_supabase:
+        return
     try:
         resolve_expired_signals()
-    except Exception:  # noqa: BLE001 -- a resolution failure must never block candle collection
+    except Exception:  # noqa: BLE001
         logger.exception("signal resolution failed")
 
-    # Counterfactual scoring of REJECTED setups. Isolated in its own try so a
-    # failure here can affect neither candle collection nor real resolution --
-    # this is analysis data, strictly less important than either.
+    # Counterfactual scoring of REJECTED setups. Isolated so a failure here
+    # can affect neither collection nor real resolution -- this is analysis
+    # data, strictly less important than either.
     try:
         resolve_shadow_opportunities()
     except Exception:  # noqa: BLE001
@@ -230,6 +246,19 @@ def start_scheduler() -> AsyncIOScheduler:
         logger.info("daily heartbeat scheduled for %02d:00 UTC", settings.heartbeat_hour_utc)
     elif settings.has_telegram:
         logger.info("daily heartbeat disabled (HEARTBEAT_HOUR_UTC=-1)")
+
+    # Resolution runs on its own schedule, always. Every minute, because
+    # the shortest expiry is 300s and a signal that expired should not wait
+    # long for an honest answer.
+    if settings.has_supabase:
+        _scheduler.add_job(
+            run_resolution,
+            "interval",
+            seconds=60,
+            id="signal_resolution",
+            max_instances=1,
+            coalesce=True,
+        )
 
     if settings.deriv_app_id:
         # Every 30 seconds, so each closed S30 bar is evaluated exactly

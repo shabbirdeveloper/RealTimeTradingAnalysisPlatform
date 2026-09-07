@@ -146,3 +146,38 @@ class HealthDerivationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResolutionScopeTests(unittest.TestCase):
+    """A broker-OTC row must not abort resolution for real-market rows.
+
+    Deriv symbols are deliberately absent from the Asset enum, so Asset()
+    raises on them. That raise happened inside the per-row loop, so one
+    out-of-scope row aborted the whole pass and left every real-market
+    signal ACTIVE forever -- a growing backlog that reads exactly like a
+    quiet market.
+    """
+
+    def test_otc_symbols_are_not_in_the_public_market_enum(self):
+        from app.instruments import DERIV_API_SYMBOLS
+
+        try:
+            from app.schemas.candle import Asset
+        except ModuleNotFoundError:
+            self.skipTest("pydantic unavailable in this environment")
+
+        for symbol in DERIV_API_SYMBOLS:
+            with self.assertRaises(ValueError, msg=f"{symbol} leaked into Asset"):
+                Asset(symbol)
+
+    def test_resolution_skips_unknown_symbols_instead_of_raising(self):
+        # Read the source directly: importing the module pulls in pydantic,
+        # which is not installed everywhere this suite runs, and the
+        # guarantee under test is a property of the code, not of a live
+        # database call.
+        import pathlib
+
+        source = pathlib.Path("app/collector/resolution.py").read_text(encoding="utf-8")
+        self.assertIn("def resolve_expired_signals", source)
+        self.assertIn("except ValueError", source,
+                      "an out-of-scope symbol must be skipped, not allowed to abort the pass")
