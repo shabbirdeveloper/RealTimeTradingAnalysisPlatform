@@ -16,9 +16,13 @@ import { SignalAlerts } from "@/components/dashboard/signal-alerts";
  */
 export function LiveSignalsGrid({
   signals,
+  lastEvaluated,
   staleNote,
 }: {
   signals: Record<AssetSymbol, Signal | null>;
+  /** Newest decision per asset of ANY status, from latest_evaluation_times().
+   *  The signal row itself only knows when the visible decision was made. */
+  lastEvaluated?: Record<string, string>;
   /** Passed down from the server, which knows whether a collector is
    *  deliberately off. Without it every stale card guesses "engine may be
    *  stopped", which is the wrong diagnosis when it was switched off on
@@ -44,7 +48,16 @@ export function LiveSignalsGrid({
         {ASSET_LIST.map((asset, i) => {
           const signal = signals[asset];
           if (!signal) return <NoSignalCard key={asset} asset={asset} index={i} />;
-          return <LiveSignalCard key={asset} signal={signal} now={now} index={i} staleNote={staleNote} />;
+          return (
+            <LiveSignalCard
+              key={asset}
+              signal={signal}
+              now={now}
+              index={i}
+              lastEvaluatedAt={lastEvaluated?.[asset]}
+              staleNote={staleNote}
+            />
+          );
         })}
       </div>
     </>

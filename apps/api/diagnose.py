@@ -469,6 +469,71 @@ else:
 # the user-facing reads on is_approved(). A policy that filters everything
 # out returns an EMPTY SET, not an error, so the site said "no candle has
 # ever been stored" about a table with hundreds of thousands of rows.
+head("12b. Per-asset staleness — which instruments stopped, and why")
+
+# The question the dashboard cannot answer for itself. A card shows the
+# newest decision the READER may see; REJECTED rows are hidden from
+# non-admins, so an instrument that is being evaluated every cycle and
+# declined every cycle looks identical to one whose feed died four days
+# ago. Those need opposite responses, so this splits them apart: newest
+# row of ANY status, newest VISIBLE row, and newest candle, per asset.
+
+per_asset: dict[str, dict] = {}
+recent = (
+    client.table("signals")
+    .select("asset_id, generated_at, last_evaluated_at, status, direction, market_regime")
+    .order("generated_at", desc=True)
+    .limit(4000)
+    .execute()
+    .data
+    or []
+)
+for row in recent:
+    symbol = by_id.get(row["asset_id"], "?")
+    slot = per_asset.setdefault(symbol, {"any": None, "visible": None, "statuses": {}})
+    when = parse(row["last_evaluated_at"] or row["generated_at"])
+    if slot["any"] is None or when > slot["any"]:
+        slot["any"] = when
+    if row["status"] not in ("REJECTED", "CANDIDATE"):
+        if slot["visible"] is None or when > slot["visible"]:
+            slot["visible"] = when
+    slot["statuses"][row["status"]] = slot["statuses"].get(row["status"], 0) + 1
+
+if not per_asset:
+    line(WARN, "no decisions at all — nothing to compare")
+else:
+    print(f"  {'asset':<11} {'last decision':<16} {'last VISIBLE':<16} statuses")
+    for symbol in sorted(per_asset):
+        slot = per_asset[symbol]
+        any_age = age(slot["any"], now) if slot["any"] else "never"
+        vis_age = age(slot["visible"], now) if slot["visible"] else "never"
+        counts_text = ", ".join(f"{k}={v}" for k, v in sorted(slot["statuses"].items()))
+        print(f"  {symbol:<11} {any_age:<16} {vis_age:<16} {counts_text}")
+    print()
+
+    # Three genuinely different conditions, and the fix differs for each.
+    for symbol in sorted(per_asset):
+        slot = per_asset[symbol]
+        if slot["any"] is None:
+            continue
+        stalled = (now - slot["any"]).total_seconds() > 3600
+        hidden = (
+            slot["visible"] is not None
+            and slot["any"] is not None
+            and (slot["any"] - slot["visible"]).total_seconds() > 3600
+        )
+        if stalled:
+            line(BAD, f"{symbol}: no decision of ANY status for {age(slot['any'], now)} "
+                      "— this instrument really has stopped being evaluated")
+        elif hidden:
+            line(OK, f"{symbol}: evaluated {age(slot['any'], now)}, but the newest VISIBLE "
+                     f"decision is {age(slot['visible'], now)} — it is being DECLINED, not stalled")
+
+    print()
+    line(INFO, "an instrument that is 'being declined' is working correctly; one that")
+    line(INFO, "has 'stopped being evaluated' needs its feed checked in section 5.")
+
+
 head("12. Web app access (can the SITE read what the collector wrote?)")
 
 if not has_column("profiles", "access_status"):

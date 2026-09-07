@@ -13,11 +13,17 @@ export function LiveSignalCard({
   signal,
   now,
   index = 0,
+  lastEvaluatedAt,
   staleNote = "engine may be stopped",
 }: {
   signal: Signal;
   now: Date;
   index?: number;
+  /** From latest_evaluation_times(): the newest decision of ANY status.
+   *  May be far newer than this signal, because REJECTED decisions are
+   *  hidden from non-admins. Without it a healthy engine that has been
+   *  declining setups for days is reported as a stopped one. */
+  lastEvaluatedAt?: string | null;
   /** What a stale card means HERE. "Engine may be stopped" is a guess, and
    *  the wrong one when a collector is deliberately switched off; the
    *  server knows which and passes it down. */
@@ -30,8 +36,15 @@ export function LiveSignalCard({
   const accent = signal.direction === "CALL" ? "bg-call" : signal.direction === "PUT" ? "bg-put" : "bg-notrade/70";
   // `now` is a prop (null-until-hydrated upstream), not Date.now(), so
   // server and client render identical markup.
-  const lastChecked = signal.lastEvaluatedAt ?? signal.generatedAt;
+  const shownAt = signal.lastEvaluatedAt ?? signal.generatedAt;
+  const lastChecked =
+    lastEvaluatedAt && new Date(lastEvaluatedAt) > new Date(shownAt) ? lastEvaluatedAt : shownAt;
   const checkStale = isCheckStale(lastChecked, now.getTime());
+  // The engine has decided something since the decision on this card, and
+  // that decision is one this reader may not see. Saying so is the whole
+  // difference between "the engine is working, it just keeps declining"
+  // and "the engine is dead".
+  const hiddenNewer = Boolean(lastEvaluatedAt && new Date(lastEvaluatedAt) > new Date(shownAt));
 
   return (
     <Card
@@ -62,6 +75,12 @@ export function LiveSignalCard({
               {formatRelative(lastChecked, now.getTime())}
               {checkStale && ` — ${staleNote}`}
             </p>
+            {hiddenNewer && (
+              <p className="text-xs text-muted-foreground/70">
+                Newer decisions exist that are not shown here — the engine is
+                running and declining setups.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <RegimeBadge regime={signal.marketRegime} />
