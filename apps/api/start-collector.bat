@@ -22,8 +22,9 @@ if not exist ".venv\Scripts\python.exe" (
 
 echo Starting the collector. LEAVE THIS WINDOW OPEN.
 echo.
-echo It polls every 10 minutes. Between cycles it sits QUIET -- that is
-echo normal, not a hang. Do not press Ctrl+C; that stops collecting.
+echo The OTC engine evaluates every 30 seconds. Expect mostly NO_TRADE,
+echo each with a reason -- that is the engine working, not failing.
+echo Do not press Ctrl+C; that stops collecting.
 echo.
 echo Use a SECOND window for check.bat and everything else.
 echo.
