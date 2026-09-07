@@ -1,4 +1,6 @@
 import { EngineMonitor } from "@/components/dashboard/engine-monitor";
+import { EvaluateButton } from "@/components/dashboard/evaluate-button";
+import { ASSET_CONFIGS, ASSET_LIST, OTC_ASSET_LIST } from "@/data/assets";
 import { getEngineSnapshot } from "@/lib/engine-monitor";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +37,27 @@ export default async function EnginePage() {
         score floor and the separation floor, so most cycles end in no trade.
         The figures here are counted from stored decisions — nothing is estimated.
       </div>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Analyse now</h2>
+          <p className="text-xs text-muted-foreground">
+            Runs the same evaluation the scheduler runs, on the same closed bars.
+            Most of the time the answer is NO TRADE — that is the engine working.
+            If the entry bar has not closed since the last run, the answer cannot
+            change and it will say so.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[...ASSET_LIST, ...OTC_ASSET_LIST].map((symbol) => (
+            <EvaluateButton
+              key={symbol}
+              symbol={symbol}
+              label={ASSET_CONFIGS[symbol].displayName}
+            />
+          ))}
+        </div>
+      </section>
 
       <EngineMonitor snapshot={snapshot} />
     </div>
