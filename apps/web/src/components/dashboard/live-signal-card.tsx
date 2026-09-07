@@ -9,7 +9,20 @@ import { cn, expirySecondsOf, formatCountdown, formatDateTimeUTC, formatExpiry, 
 import { Clock, Sparkles } from "lucide-react";
 import { DecisionChecks } from "@/components/dashboard/decision-checks";
 
-export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now: Date; index?: number }) {
+export function LiveSignalCard({
+  signal,
+  now,
+  index = 0,
+  staleNote = "engine may be stopped",
+}: {
+  signal: Signal;
+  now: Date;
+  index?: number;
+  /** What a stale card means HERE. "Engine may be stopped" is a guess, and
+   *  the wrong one when a collector is deliberately switched off; the
+   *  server knows which and passes it down. */
+  staleNote?: string;
+}) {
   const cfg = ASSET_CONFIGS[signal.asset];
   const isNoTrade = signal.direction === "NO_TRADE";
   const msRemaining = signal.validUntil ? new Date(signal.validUntil).getTime() - now.getTime() : 0;
@@ -47,7 +60,7 @@ export function LiveSignalCard({ signal, now, index = 0 }: { signal: Signal; now
             <p className={cn("text-xs", checkStale ? "text-destructive" : "text-muted-foreground/70")}>
               {checkStale ? "Last checked " : "Checked "}
               {formatRelative(lastChecked, now.getTime())}
-              {checkStale && " — engine may be stopped"}
+              {checkStale && ` — ${staleNote}`}
             </p>
           </div>
           <div className="flex items-center gap-2">

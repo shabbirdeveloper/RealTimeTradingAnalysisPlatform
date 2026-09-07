@@ -1,5 +1,6 @@
 import { getLatestSignals } from "@/lib/signals";
 import { LiveSignalsGrid } from "@/components/dashboard/live-signals-grid";
+import { staleNoteForRealMarket } from "@/lib/engine-status";
 import { OtcWarning } from "@/components/shared/otc-warning";
 
 export const dynamic = "force-dynamic"; // always read the latest signal, never a stale build-time snapshot
@@ -16,7 +17,7 @@ export default async function LiveSignalsPage() {
 
       <OtcWarning />
 
-      <LiveSignalsGrid signals={signals} />
+      <LiveSignalsGrid signals={signals} staleNote={staleNoteForRealMarket()} />
     </div>
   );
 }

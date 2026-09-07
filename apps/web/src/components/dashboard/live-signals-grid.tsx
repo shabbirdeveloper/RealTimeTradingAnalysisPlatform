@@ -14,7 +14,17 @@ import { SignalAlerts } from "@/components/dashboard/signal-alerts";
  * round-trip. The signals themselves are real; only the current-time
  * clock used to render the countdown is client-side.
  */
-export function LiveSignalsGrid({ signals }: { signals: Record<AssetSymbol, Signal | null> }) {
+export function LiveSignalsGrid({
+  signals,
+  staleNote,
+}: {
+  signals: Record<AssetSymbol, Signal | null>;
+  /** Passed down from the server, which knows whether a collector is
+   *  deliberately off. Without it every stale card guesses "engine may be
+   *  stopped", which is the wrong diagnosis when it was switched off on
+   *  purpose. */
+  staleNote?: string;
+}) {
   const now = useNow(1000);
 
   if (!now) {
@@ -34,7 +44,7 @@ export function LiveSignalsGrid({ signals }: { signals: Record<AssetSymbol, Sign
         {ASSET_LIST.map((asset, i) => {
           const signal = signals[asset];
           if (!signal) return <NoSignalCard key={asset} asset={asset} index={i} />;
-          return <LiveSignalCard key={asset} signal={signal} now={now} index={i} />;
+          return <LiveSignalCard key={asset} signal={signal} now={now} index={i} staleNote={staleNote} />;
         })}
       </div>
     </>

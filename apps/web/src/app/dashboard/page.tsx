@@ -9,6 +9,8 @@ import { getAssetPriceSnapshotsWithReason } from "@/lib/market-data";
 import { getLatestSignals, getLastEvaluationTimes, getLatestOtcSignals } from "@/lib/signals";
 import { OtcSection } from "@/components/dashboard/otc-section";
 import { OtcWarning } from "@/components/shared/otc-warning";
+import { publicMarketCollectorEnabled } from "@/lib/engine-status";
+import { PauseCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AssetSymbol, Signal } from "@/types";
 import { Award, TrendingUp, Target, AlertTriangle } from "lucide-react";
@@ -121,6 +123,26 @@ export default async function DashboardHomePage() {
           }
         />
       </div>
+
+      {!publicMarketCollectorEnabled() && (
+        /* Without this the five cards below simply go stale and the page
+           looks broken. Deliberately switched off and actually broken are
+           opposite conditions calling for opposite responses, and a
+           dashboard that cannot tell them apart teaches its reader to
+           ignore both. */
+        <div className="flex items-start gap-2.5 rounded-lg border border-border bg-card/40 px-3.5 py-2.5 text-xs leading-relaxed text-muted-foreground">
+          <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-notrade" />
+          <span>
+            <strong className="font-semibold text-foreground">
+              The real-market collector is switched off.
+            </strong>{" "}
+            The five instruments below are not being analysed right now, so their
+            prices and decisions are the last ones recorded — not live. The engine
+            is running on the broker-generated instrument further down this page.
+            Nothing here is broken.
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
         {ASSET_LIST.map((asset, i) => {
