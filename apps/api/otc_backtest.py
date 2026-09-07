@@ -155,6 +155,11 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
         evaluations = signals = wins = losses = draws = unresolved = 0
         blocked: dict[str, int] = {}
         by_direction = {"CALL": [0, 0], "PUT": [0, 0]}
+        # Per strategy: [wins, decided, signals]. This is the whole reason
+        # the engine emits three NAMED strategies rather than one blended
+        # score -- a blend cannot be asked which idea is losing, and that
+        # is the first question worth asking.
+        by_strategy: dict[str, list[int]] = {}
 
         at = start
         while at <= end:
@@ -168,11 +173,14 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
                 decision = evaluate(symbol, sliced, at, healthy_at(at), profile)
                 if decision.is_signal:
                     signals += 1
+                    slot = by_strategy.setdefault(decision.strategy or "unnamed", [0, 0, 0])
+                    slot[2] += 1
                     result = outcome(entry_rows, at, decision.price,
                                      decision.direction.value, decision.expiry_seconds)
                     if result == "WIN":
                         wins += 1
                         by_direction[decision.direction.value][0] += 1
+                        slot[0] += 1
                     elif result == "LOSS":
                         losses += 1
                     elif result == "DRAW":
@@ -181,6 +189,7 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
                         unresolved += 1
                     if result in ("WIN", "LOSS"):
                         by_direction[decision.direction.value][1] += 1
+                        slot[1] += 1
                 else:
                     key = (decision.rejection_reasons or ["unspecified"])[0]
                     key = "".join("N" if c.isdigit() else c for c in key)
@@ -196,6 +205,7 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
         "span_days": span_days, "evaluations": evaluations, "signals": signals,
         "wins": wins, "losses": losses, "draws": draws, "unresolved": unresolved,
         "blocked": blocked, "by_direction": by_direction,
+        "by_strategy": by_strategy,
     }
 
 
@@ -234,6 +244,27 @@ def report(r: dict) -> None:
     for side, (w, n) in r["by_direction"].items():
         if n:
             print(f"  {side:<5} {w}/{n} = {w/n*100:.1f}%")
+
+    if r.get("by_strategy"):
+        print()
+        print("  BY STRATEGY — which idea is actually working")
+        print(f"    {'strategy':<24} {'signals':>8} {'per day':>8} {'W':>4} {'L':>4} "
+              f"{'rate':>7} {'95% CI':>14}")
+        for name, (w, decided_n, sig) in sorted(
+            r["by_strategy"].items(), key=lambda kv: -kv[1][2]
+        ):
+            per_day = sig / r["span_days"]
+            if decided_n == 0:
+                print(f"    {name:<24} {sig:>8} {per_day:>8.1f} {'—':>4} {'—':>4} {'—':>7}")
+                continue
+            rate = w / decided_n * 100
+            low, high = wilson(w, decided_n)
+            print(f"    {name:<24} {sig:>8} {per_day:>8.1f} {w:>4} {decided_n - w:>4} "
+                  f"{rate:>6.1f}% {f'{low:.0f}-{high:.0f}%':>14}")
+        print()
+        print("    A strategy needs BOTH: enough signals to be worth enabling, and a")
+        print("    LOWER bound above break-even. One that fires twice a week has")
+        print("    demonstrated nothing however good its headline rate looks.")
 
     if r["blocked"]:
         print("\n  what declined the rest:")

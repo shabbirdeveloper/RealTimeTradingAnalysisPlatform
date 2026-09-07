@@ -126,10 +126,35 @@ def store_decision(decision: OTCDecision) -> str | None:
     # must not be announced -- a Telegram message for a row that does not
     # exist is worse than silence, because it will never appear in the
     # history the message implies it is part of.
-    if signal_id and decision.is_signal:
+    if signal_id and decision.is_signal and _should_notify(decision):
         _notify(decision)
 
     return signal_id
+
+
+def _should_notify(decision: OTCDecision) -> bool:
+    """Whether this signal is worth interrupting someone for.
+
+    Deliberately separate from whether it was worth STORING. Every
+    decision is recorded so the dataset stays complete; the channel is a
+    narrower gate, and keeping them separate means loosening the engine to
+    gather evidence does not also flood Telegram.
+    """
+    from app.otc.config import CONFIG
+
+    if CONFIG.notify_strategies and decision.strategy not in CONFIG.notify_strategies:
+        logger.info(
+            "[OTC_SIGNAL] %s %s stored but not sent — strategy %s is not in the notify list",
+            decision.symbol, decision.direction.value, decision.strategy,
+        )
+        return False
+    if decision.score < CONFIG.notify_min_score:
+        logger.info(
+            "[OTC_SIGNAL] %s %s stored but not sent — score %d below the notify floor of %d",
+            decision.symbol, decision.direction.value, decision.score, CONFIG.notify_min_score,
+        )
+        return False
+    return True
 
 
 def _notify(decision: OTCDecision) -> None:

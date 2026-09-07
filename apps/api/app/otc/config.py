@@ -91,6 +91,26 @@ class OTCEngineConfig:
     )
 
 
+    # --- what reaches Telegram (spec Phase 26) --------------------------
+    #
+    # Empty means "every strategy", which is the correct DEFAULT precisely
+    # because nothing has been measured yet. Narrowing this before the
+    # backtest has spoken would be picking a favourite, and a favourite
+    # chosen on intuition is how a filter that quietly removes the winning
+    # setups gets installed and never questioned.
+    #
+    # Once otc_backtest.py --sweep shows which strategy carries a lower
+    # interval bound above break-even on a usable number of signals, put
+    # its name here and only it will notify.
+    notify_strategies: tuple[str, ...] = ()
+
+    # Signals below this score are stored but not sent. Separate from
+    # minimum_score on purpose: what is worth RECORDING and what is worth
+    # INTERRUPTING someone for are different bars, and collapsing them
+    # means every loosening of the engine also spams the channel.
+    notify_min_score: int = 0
+
+
 CONFIG = OTCEngineConfig()
 
 

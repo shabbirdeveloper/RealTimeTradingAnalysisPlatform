@@ -235,3 +235,53 @@ class NotificationTests(unittest.TestCase):
         text = format_otc_signal(self._decision(Direction.CALL))
         self.assertIn("not a probability", text)
         self.assertNotIn("%", text.split("<i>")[0])
+
+
+class NotifyFilterTests(unittest.TestCase):
+    """What is worth STORING and what is worth INTERRUPTING someone for are
+    different bars. Keeping them separate means loosening the engine to
+    gather evidence does not also flood the channel."""
+
+    def _decision(self, strategy: str, score: int) -> OTCDecision:
+        return OTCDecision(
+            symbol="DERIV_V75", broker="DERIV", generated_at=NOW,
+            direction=Direction.CALL, status=SignalStatus.ACTIVE,
+            price=500.0, expiry_seconds=300, regime="TRENDING_UP", regime_reason="",
+            strategy=strategy, call_score=score, put_score=10,
+            call_categories=CategoryScores(), put_categories=CategoryScores(),
+        )
+
+    def test_empty_list_means_every_strategy_notifies(self):
+        """The correct default while nothing has been measured. Narrowing it
+        early is how a filter that removes the winning setups gets installed
+        and never questioned."""
+        from app.otc.config import CONFIG
+        from app.otc.repository import _should_notify
+
+        self.assertEqual(CONFIG.notify_strategies, ())
+        for name in ("trend_pullback", "momentum_continuation", "level_rejection"):
+            self.assertTrue(_should_notify(self._decision(name, 84)))
+
+    def test_a_named_list_excludes_the_others(self):
+        from app.otc.config import CONFIG
+        from app.otc.repository import _should_notify
+
+        original = CONFIG.notify_strategies
+        object.__setattr__(CONFIG, "notify_strategies", ("level_rejection",))
+        try:
+            self.assertTrue(_should_notify(self._decision("level_rejection", 84)))
+            self.assertFalse(_should_notify(self._decision("trend_pullback", 84)))
+        finally:
+            object.__setattr__(CONFIG, "notify_strategies", original)
+
+    def test_notify_floor_is_independent_of_the_engine_threshold(self):
+        from app.otc.config import CONFIG
+        from app.otc.repository import _should_notify
+
+        original = CONFIG.notify_min_score
+        object.__setattr__(CONFIG, "notify_min_score", 85)
+        try:
+            self.assertFalse(_should_notify(self._decision("trend_pullback", 80)))
+            self.assertTrue(_should_notify(self._decision("trend_pullback", 90)))
+        finally:
+            object.__setattr__(CONFIG, "notify_min_score", original)
