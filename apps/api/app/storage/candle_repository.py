@@ -171,6 +171,9 @@ def asset_id_for_symbol(symbol: str) -> str:
     return rows[0]["id"]
 
 
+_UPSERT_BATCH = 500
+
+
 def upsert_otc_candles(
     symbol: str,
     timeframe: str,
@@ -212,10 +215,21 @@ def upsert_otc_candles(
         }
         for bar in bars
     ]
-    get_service_client().table("candles").upsert(
-        rows, on_conflict="asset_id,timeframe,open_time"
-    ).execute()
-    return len(rows)
+    # Sent in batches. A backfill hands this forty thousand rows at once,
+    # and one request that large is where a store quietly stops being a
+    # store: too big for the transport, or accepted in part, with the
+    # caller told only how many rows it SENT. Batching keeps each request a
+    # size the database will certainly take, and the count returned is the
+    # sum of what was actually accepted.
+    client = get_service_client()
+    stored = 0
+    for i in range(0, len(rows), _UPSERT_BATCH):
+        batch = rows[i:i + _UPSERT_BATCH]
+        client.table("candles").upsert(
+            batch, on_conflict="asset_id,timeframe,open_time"
+        ).execute()
+        stored += len(batch)
+    return stored
 
 
 def fetch_recent_otc_candles(symbol: str, timeframe: str, limit: int) -> list[dict]:
