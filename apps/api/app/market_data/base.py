@@ -49,3 +49,17 @@ class MarketDataProvider(ABC):
             f"{self.name} does not publish one-minute candles; the 5-minute "
             "engine needs them for its entry timeframe."
         )
+
+    async def fetch_m1_before(
+        self, asset: Asset, end_time: datetime, outputsize: int
+    ) -> list[Candle]:
+        """One page of M1 history ending at `end_time`, for backfill.
+
+        Fails loudly for the same reason fetch_latest_m1 does: coarser bars
+        relabelled as M1 would corrupt history permanently, and history is
+        the thing a backtest cannot check.
+        """
+        raise MarketDataError(
+            f"{self.name} does not publish one-minute candles, so its history "
+            "cannot be paged at that interval."
+        )

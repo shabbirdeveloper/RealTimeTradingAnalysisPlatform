@@ -76,6 +76,21 @@ class TwelveDataProvider(MarketDataProvider):
         """
         return await self._fetch(asset, "5min", outputsize, end_time=end_time)
 
+    async def fetch_m1_before(
+        self, asset: Asset, end_time: datetime, outputsize: int
+    ) -> list[Candle]:
+        """One page of M1 history ending at `end_time`, for backfill.
+
+        The 5-minute engine's entry and momentum timeframes are M1 and M3,
+        and neither can be derived from M5. So the live collector's 900-bar
+        window is the ONLY M1 history that exists, and 900 minutes is
+        fifteen hours -- exactly the engine's own warm-up requirement, which
+        leaves a backtest window of zero. Paging M1 backwards is what turns
+        that into a measurable stretch without waiting days for the
+        collector to accumulate one.
+        """
+        return await self._fetch(asset, "1min", outputsize, end_time=end_time)
+
     async def _fetch(
         self,
         asset: Asset,

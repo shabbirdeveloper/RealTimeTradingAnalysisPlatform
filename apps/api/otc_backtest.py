@@ -169,12 +169,45 @@ def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: i
     object.__setattr__(CONFIG, "minimum_directional_difference", separation)
 
     try:
-        start = entry_rows[0]["open_time"] + timedelta(
-            seconds=CONFIG.min_bars_per_timeframe * TIMEFRAME_SECONDS[profile.context]
-        )
+        # The engine refuses to look at anything until every required
+        # timeframe holds min_bars CLOSED bars. The earliest instant that is
+        # true is a property of what each timeframe actually HAS -- not of
+        # where the entry series happens to begin.
+        #
+        # This used to assume they were the same thing: warm-up was measured
+        # forward from the first M1 bar, at the context timeframe's rate. So
+        # a fifteen-hour M1 window was charged fifteen hours of M15 warm-up
+        # and left a measurable span of zero, even with weeks of M15 already
+        # stored behind it. The loop below re-checks the bar counts anyway,
+        # so nothing here is a safety gate -- it only decides where to start.
+        ready: list[datetime] = []
+        short: list[str] = []
+        for tf in profile.required:
+            rows = series[tf]
+            if len(rows) < CONFIG.min_bars_per_timeframe:
+                short.append(f"{tf} has {len(rows)}")
+                continue
+            warm = rows[CONFIG.min_bars_per_timeframe - 1]
+            ready.append(warm["open_time"] + timedelta(seconds=TIMEFRAME_SECONDS[tf]))
+
+        if short:
+            return {"error": (
+                f"the engine needs {CONFIG.min_bars_per_timeframe} bars in every "
+                f"required timeframe before it evaluates anything, and "
+                f"{', '.join(short)}. Run backfill-m1.bat --run to fetch M1 history "
+                "in one pass -- M3 and M1 cannot be derived from the M5 that "
+                "backfill.bat collects."
+            )}
+
+        start = max(ready)
         end = entry_rows[-1]["open_time"]
         if start >= end:
-            return {"error": "not enough history for the warm-up window"}
+            return {"error": (
+                f"warm-up consumes everything stored: the last required timeframe is "
+                f"not ready until {start:%Y-%m-%d %H:%M}, and stored history ends at "
+                f"{end:%Y-%m-%d %H:%M}. There is no span left to measure. "
+                "Run backfill-m1.bat --run --days 7."
+            )}
 
         evaluations = signals = wins = losses = draws = unresolved = 0
         blocked: dict[str, int] = {}
