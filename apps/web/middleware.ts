@@ -53,7 +53,7 @@ function isProtected(pathname: string): boolean {
   return PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
-export async function middleware(request: NextRequest) {
+async function guard(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const { pathname: earlyPath } = request.nextUrl;
@@ -156,6 +156,40 @@ export async function middleware(request: NextRequest) {
   }
 
   return response;
+}
+
+
+
+/**
+ * The only exported entry point, and it cannot throw.
+ *
+ * Everything above is already guarded case by case, and the site still
+ * returned MIDDLEWARE_INVOCATION_FAILED -- which is the point: middleware
+ * runs on every request, so ANY path I failed to anticipate takes down the
+ * whole site rather than one route. Enumerating the throwing calls was the
+ * right fix for the ones I knew about; it is not a strategy for the ones I
+ * do not.
+ *
+ * So the outer boundary is unconditional. A failure here degrades to
+ * exactly what "not configured" already does -- deny protected routes,
+ * serve public ones -- and the security property holds by construction
+ * rather than by my having listed every exception correctly.
+ *
+ * The error is logged, not swallowed: it lands in Vercel's runtime logs
+ * where the actual cause can be read, instead of presenting as a blank
+ * 500 that says nothing.
+ */
+export async function middleware(request: NextRequest) {
+  try {
+    return await guard(request);
+  } catch (error) {
+    console.error(
+      "[middleware] unhandled failure on",
+      request.nextUrl.pathname,
+      error instanceof Error ? `${error.name}: ${error.message}` : error
+    );
+    return unverified(request, "unavailable");
+  }
 }
 
 export const config = {
