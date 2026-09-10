@@ -16,7 +16,34 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
  *
  * Public routes still pass through when unconfigured, so the marketing
  * pages keep working; protected routes do not.
+ *
+ * AND IT MUST NEVER THROW. Middleware runs on EVERY request, so an
+ * uncaught exception here is not a broken page -- it is
+ * MIDDLEWARE_INVOCATION_FAILED on the entire site, marketing pages
+ * included. Three things in the original could throw and none was
+ * guarded: createServerClient on a malformed URL (a value pasted with
+ * quotes or a stray space is enough), auth.getUser() on any network
+ * trouble reaching Supabase, and destructuring `data.user` when `data`
+ * came back undefined.
+ *
+ * Every failure now lands in the SAME place as "not configured": deny the
+ * protected routes, let the public ones through. The security property is
+ * unchanged -- an identity that cannot be verified is not trusted -- while
+ * a Supabase hiccup stops taking the whole site down with it.
  */
+
+/** Deny protected routes, serve public ones. The one response to every
+ *  reason we cannot verify who is asking. */
+function unverified(request: NextRequest, reason: string) {
+  if (isProtected(request.nextUrl.pathname)) {
+    const loginUrl = new URL("/login", request.url);
+    // Distinguishes a misconfigured or unreachable deployment from an
+    // ordinary signed-out redirect, so this is never read as a login loop.
+    loginUrl.searchParams.set("error", reason);
+    return NextResponse.redirect(loginUrl);
+  }
+  return NextResponse.next();
+}
 // /pending is protected too: it reports YOUR status, so it needs a session.
 // The approval gate below skips it explicitly, or a pending user would be
 // redirected to it forever.
@@ -32,15 +59,16 @@ export async function middleware(request: NextRequest) {
   const { pathname: earlyPath } = request.nextUrl;
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    if (isProtected(earlyPath)) {
-      // Cannot verify identity -> refuse. `error=config` distinguishes a
-      // misconfigured deployment from an ordinary signed-out redirect, so
-      // this doesn't get mistaken for a login loop.
-      const loginUrl = new URL("/login", request.url);
-      loginUrl.searchParams.set("error", "config");
-      return NextResponse.redirect(loginUrl);
-    }
-    return NextResponse.next();
+    return unverified(request, "config");
+  }
+
+  // A value pasted with surrounding quotes, a trailing space, or a missing
+  // scheme parses as a URL nowhere -- and createServerClient throws on it,
+  // which is one of the ways this middleware used to take the site down.
+  try {
+    new URL(supabaseUrl);
+  } catch {
+    return unverified(request, "config");
   }
 
   let response = NextResponse.next({ request });
@@ -60,9 +88,17 @@ export async function middleware(request: NextRequest) {
 
   // Touches the session so an expired access token gets refreshed via the
   // refresh token before any Server Component tries to read it.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  //
+  // Wrapped, and the result read defensively: this is a network call, and
+  // an unwrapped rejection here was returning 500 for every page on the
+  // site rather than for the one route that needed a session.
+  let user: { id: string } | null = null;
+  try {
+    const result = await supabase.auth.getUser();
+    user = result?.data?.user ?? null;
+  } catch {
+    return unverified(request, "unavailable");
+  }
 
   const { pathname } = request.nextUrl;
   const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
