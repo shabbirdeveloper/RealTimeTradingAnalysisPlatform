@@ -110,10 +110,18 @@ function shape(raw: Record<string, unknown>): EngineDecision {
   };
 }
 
+/**
+ * ONE string literal, never concatenated.
+ *
+ * Supabase types a query's result by parsing this select as a literal
+ * type. Two strings joined with `+` widen to plain `string`, the parser
+ * gives up, and `data` comes back as GenericStringError[] -- which fails
+ * the build with a message about overlapping types that says nothing
+ * about the actual cause. Every other query in this app uses a single
+ * literal, which is why only this one broke.
+ */
 const COLUMNS =
-  "id, direction, status, generated_at, entry_price, expiry_seconds, expiry_at, " +
-  "technical_score, call_score, put_score, market_regime, result, closing_price, " +
-  "reasons, warnings, timeframes_snapshot, assets!inner(symbol)";
+  "id, direction, status, generated_at, entry_price, expiry_seconds, expiry_at, technical_score, call_score, put_score, market_regime, result, closing_price, reasons, warnings, timeframes_snapshot, assets!inner(symbol)";
 
 export async function getEngineSnapshot(limit = 40): Promise<EngineSnapshot> {
   const base: EngineSnapshot = {
@@ -141,7 +149,10 @@ export async function getEngineSnapshot(limit = 40): Promise<EngineSnapshot> {
 
   if (error) return { ...base, error: error.message };
 
-  const rows = ((data ?? []) as Array<Record<string, unknown>>).map(shape);
+  // Through `unknown` deliberately: the row type Supabase infers from the
+  // join is structurally unrelated to Record<string, unknown>, and shape()
+  // reads every field defensively anyway.
+  const rows = ((data ?? []) as unknown as Array<Record<string, unknown>>).map(shape);
 
   // No rows today is a real, ordinary answer — the engine may have been
   // started minutes ago. It is reported as available-with-nothing rather

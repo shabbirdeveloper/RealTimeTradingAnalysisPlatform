@@ -77,7 +77,10 @@ export async function getEngineHeartbeats(): Promise<EngineHeartbeat[]> {
     if (error || !data) return [];
 
     const now = Date.now();
-    return (data as Array<Record<string, unknown>>).map((r) => ({
+    // Through `unknown`, like every other boundary cast off an untyped
+    // Supabase response. The safety here is the defensive field reads
+    // below, not the cast.
+    return (data as unknown as Array<Record<string, unknown>>).map((r) => ({
       component: String(r.component),
       status: String(r.status),
       lastCheckedAt: String(r.last_checked_at),
