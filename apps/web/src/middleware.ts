@@ -25,6 +25,25 @@ import { NextResponse, type NextRequest } from "next/server";
  * next/server, so it cannot take the site down.
  *
  * Do not put authentication back in here.
+ *
+ * WHY THIS FILE LIVES IN src/ AND NOT AT apps/web/
+ *
+ * Next.js only looks for middleware next to the app directory. Because
+ * the app lives at src/app, the only path Next.js reads is
+ * src/middleware.ts (build/index.js: rootDir = join(appDir, '..')).
+ *
+ * A middleware.ts sitting one level up, at apps/web/, is invisible to
+ * Next.js -- but NOT to Vercel, which has its own root-level middleware
+ * convention. Vercel compiled it on its own, deployed it as a Node
+ * function, and Node then tried to require() an ESM file:
+ *
+ *   SyntaxError: Cannot use import statement outside a module
+ *     at /var/task/apps/web/middleware.js
+ *
+ * Middleware runs on every request, so that returned 500 for the whole
+ * site -- landing page included. Four attempts to fix it by changing what
+ * this file imported could not work: the file was never the problem, its
+ * location was. Do not move it back up.
  */
 
 const PROTECTED_PREFIXES = ["/dashboard", "/admin", "/pending"] as const;
