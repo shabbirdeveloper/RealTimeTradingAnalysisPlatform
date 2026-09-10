@@ -1,209 +1,64 @@
 import { NextResponse, type NextRequest } from "next/server";
-import type { CookieOptions } from "@supabase/ssr";
 
 /**
- * Refreshes the Supabase auth session on every request that isn't a static
- * asset, and enforces the actual route protection for /dashboard and
- * /admin (spec section 38: "server-side role checks", not just a client
- * redirect).
+ * A cheap early redirect for protected routes. NOTHING ELSE.
  *
- * FAILS CLOSED. An earlier version returned NextResponse.next() when the
- * Supabase env vars were missing, on the reasoning that it should "no-op
- * safely" before a project was connected. That reasoning is inverted: a
- * security control whose configuration is absent must deny, not wave the
- * request through. It was verified in production that /dashboard and
- * /admin rendered fully for a request carrying no session cookies at all.
+ * WHY THIS IS NOW SO SMALL
  *
- * Public routes still pass through when unconfigured, so the marketing
- * pages keep working; protected routes do not.
+ * It used to create a Supabase client and verify the session here. That
+ * put @supabase/ssr inside the Edge runtime, where it failed to load --
+ * and because middleware runs on EVERY request, a module that fails to
+ * load returns 500 for the entire site, landing page included. Three
+ * attempts to guard it from within could not help: a try/catch inside a
+ * function cannot catch the module that function lives in failing to
+ * import.
  *
- * AND IT MUST NEVER THROW. Middleware runs on EVERY request, so an
- * uncaught exception here is not a broken page -- it is
- * MIDDLEWARE_INVOCATION_FAILED on the entire site, marketing pages
- * included. Three things in the original could throw and none was
- * guarded: createServerClient on a malformed URL (a value pasted with
- * quotes or a stray space is enough), auth.getUser() on any network
- * trouble reaching Supabase, and destructuring `data.user` when `data`
- * came back undefined.
+ * So the verification moved to where it belongs. app/dashboard/layout.tsx
+ * and app/admin/layout.tsx are server components on the Node runtime,
+ * with no such constraint, sitting closer to the data they protect. Each
+ * calls getUser(), reads the profile, and redirects. THOSE are the checks
+ * that decide.
  *
- * Every failure now lands in the SAME place as "not configured": deny the
- * protected routes, let the public ones through. The security property is
- * unchanged -- an identity that cannot be verified is not trusted -- while
- * a Supabase hiccup stops taking the whole site down with it.
+ * This file now only answers "is there any session cookie at all?" so a
+ * signed-out visitor gets bounced before a page renders. It is an
+ * optimisation, not the security boundary -- and it imports nothing but
+ * next/server, so it cannot take the site down.
+ *
+ * Do not put authentication back in here.
  */
 
-/** Deny protected routes, serve public ones. The one response to every
- *  reason we cannot verify who is asking. */
-function unverified(request: NextRequest, reason: string) {
-  if (isProtected(request.nextUrl.pathname)) {
-    const loginUrl = new URL("/login", request.url);
-    // Distinguishes a misconfigured or unreachable deployment from an
-    // ordinary signed-out redirect, so this is never read as a login loop.
-    loginUrl.searchParams.set("error", reason);
-    return NextResponse.redirect(loginUrl);
-  }
-  return NextResponse.next();
-}
-// /pending is protected too: it reports YOUR status, so it needs a session.
-// The approval gate below skips it explicitly, or a pending user would be
-// redirected to it forever.
 const PROTECTED_PREFIXES = ["/dashboard", "/admin", "/pending"] as const;
 
 function isProtected(pathname: string): boolean {
   return PROTECTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
-async function guard(request: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const { pathname: earlyPath } = request.nextUrl;
+/**
+ * Supabase stores its session in cookies named `sb-<project-ref>-auth-token`,
+ * sometimes chunked with a `.0`, `.1` suffix. Matching the shape rather
+ * than an exact name means this keeps working if the project ref changes,
+ * and needs no environment variable to do it.
+ *
+ * A present cookie is NOT proof of a valid session -- it may be expired or
+ * forged. That is fine: this only decides whether to skip rendering a page
+ * the layout would refuse anyway. The layout does the real check.
+ */
+function hasSessionCookie(request: NextRequest): boolean {
+  return request.cookies.getAll().some(
+    (cookie) => cookie.name.startsWith("sb-") && cookie.name.includes("auth-token")
+  );
+}
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return unverified(request, "config");
-  }
-
-  // A value pasted with surrounding quotes, a trailing space, or a missing
-  // scheme parses as a URL nowhere -- and createServerClient throws on it,
-  // which is one of the ways this middleware used to take the site down.
-  try {
-    new URL(supabaseUrl);
-  } catch {
-    return unverified(request, "config");
-  }
-
-  let response = NextResponse.next({ request });
-
-  // Imported HERE, not at the top of the file.
-  //
-  // A wrapper around the whole function body did not stop
-  // MIDDLEWARE_INVOCATION_FAILED, which narrowed it to the one thing a
-  // try/catch inside the function cannot reach: the module failing to LOAD.
-  // @supabase/ssr pulls in code the Edge runtime will not always accept,
-  // and when the import fails the middleware never runs at all -- so every
-  // request on the site, including the landing page, returns 500.
-  //
-  // A dynamic import turns that from an unreachable startup failure into an
-  // ordinary caught error, which the outer boundary then degrades the same
-  // way as every other: deny protected routes, serve public ones.
-  const { createServerClient } = await import("@supabase/ssr");
-
-  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-      },
-    },
-  });
-
-  // Touches the session so an expired access token gets refreshed via the
-  // refresh token before any Server Component tries to read it.
-  //
-  // Wrapped, and the result read defensively: this is a network call, and
-  // an unwrapped rejection here was returning 500 for every page on the
-  // site rather than for the one route that needed a session.
-  let user: { id: string } | null = null;
-  try {
-    const result = await supabase.auth.getUser();
-    user = result?.data?.user ?? null;
-  } catch {
-    return unverified(request, "unavailable");
-  }
-
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
 
-  if (isProtected(pathname) && !user) {
+  if (isProtected(pathname) && !hasSessionCookie(request)) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirectedFrom", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // Approval gate. A pending account holds a valid session, so without this
-  // it would land on the dashboard like anyone else. Deliberately a single
-  // query on the same row the admin check already needs.
-  if (isProtected(pathname) && user) {
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role, access_status")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      const row = profile as { role?: string; access_status?: string } | null;
-      // Admins are never held at the gate -- the console that approves
-      // people must stay reachable. Anything other than APPROVED for a
-      // non-admin waits, including a missing column on a database that
-      // has not run migration 18 yet (undefined !== 'APPROVED'), which
-      // fails closed rather than open.
-      if (row?.role !== "admin" && row?.access_status !== "APPROVED") {
-        if (pathname !== "/pending") {
-          return NextResponse.redirect(new URL("/pending", request.url));
-        }
-      }
-    } catch {
-      return NextResponse.redirect(new URL("/pending", request.url));
-    }
-  }
-
-  if (isAdmin && user) {
-    // Fails closed: if the profiles table isn't reachable yet (e.g. the
-    // migrations haven't been run against this project), nobody gets
-    // treated as an admin rather than everybody.
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profile?.role !== "admin") {
-        return NextResponse.redirect(new URL("/dashboard", request.url));
-      }
-    } catch {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
-  }
-
-  return response;
-}
-
-
-
-/**
- * The only exported entry point, and it cannot throw.
- *
- * Everything above is already guarded case by case, and the site still
- * returned MIDDLEWARE_INVOCATION_FAILED -- which is the point: middleware
- * runs on every request, so ANY path I failed to anticipate takes down the
- * whole site rather than one route. Enumerating the throwing calls was the
- * right fix for the ones I knew about; it is not a strategy for the ones I
- * do not.
- *
- * So the outer boundary is unconditional. A failure here degrades to
- * exactly what "not configured" already does -- deny protected routes,
- * serve public ones -- and the security property holds by construction
- * rather than by my having listed every exception correctly.
- *
- * The error is logged, not swallowed: it lands in Vercel's runtime logs
- * where the actual cause can be read, instead of presenting as a blank
- * 500 that says nothing.
- */
-export async function middleware(request: NextRequest) {
-  try {
-    return await guard(request);
-  } catch (error) {
-    console.error(
-      "[middleware] unhandled failure on",
-      request.nextUrl.pathname,
-      error instanceof Error ? `${error.name}: ${error.message}` : error
-    );
-    return unverified(request, "unavailable");
-  }
+  return NextResponse.next();
 }
 
 export const config = {
