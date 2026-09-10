@@ -47,24 +47,27 @@ class Cadence:
         return self.active_seconds if is_active_hours(now) else self.quiet_seconds
 
 
-# Sized against FREE_TIER_REQUESTS_PER_DAY, and the arithmetic is the point:
+# Sized against FREE_TIER_REQUESTS_PER_DAY for the instruments actually
+# enabled, and the arithmetic is the point:
 #
-#   3 FX  x (14h/5min + 10h/30min)  = 564
-#   2 cry x (24h/15min)             = 192
-#                                     ---
-#                                     756  of 800
+#   1 asset x (14h / 2min  +  10h / 5min)  =  420 + 120  =  540 of 800
 #
-# Five minutes during London and New York is where the 5-minute engine
-# earns its keep; the quiet hours are stretched to pay for it. Crypto sits
-# at fifteen because two 24/7 instruments at five-minute cadence alone cost
-# 576 -- more than two thirds of the day's budget for the assets that move
-# least predictably on this horizon.
-FX_CADENCE = Cadence(active_seconds=300, quiet_seconds=1800)
+# One pair buys a two-minute cadence during London and New York, which is
+# where a 300-second expiry is actually traded. The M1 entry bar changes
+# every minute, so two minutes sees every other one close -- as close to
+# live as this tier allows.
+#
+# This is why concentrating on one instrument is not merely a focus
+# decision: five assets on this cadence would cost 2700 requests a day
+# against a tier of 800, and the quota would be gone before lunch.
+FX_CADENCE = Cadence(active_seconds=120, quiet_seconds=300)
 CONTINUOUS_CADENCE = Cadence(active_seconds=900, quiet_seconds=900)
 
 # The scheduler's own tick. Must divide every cadence above, or an asset
-# whose interval is not a multiple of the tick drifts later each cycle.
-TICK_SECONDS = 300
+# whose interval is not a multiple of the tick drifts later each cycle --
+# a 120-second asset checked on a 300-second tick is really a 300-second
+# asset, and the faster cadence would exist only in the config.
+TICK_SECONDS = 60
 
 
 def is_active_hours(now: datetime) -> bool:

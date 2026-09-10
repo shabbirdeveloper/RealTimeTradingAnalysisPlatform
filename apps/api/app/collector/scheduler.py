@@ -26,7 +26,13 @@ from app.collector.market_hours import any_market_open, is_market_open
 from app.market_data.errors import RateLimitError
 from app.collector.resolution import resolve_expired_signals, resolve_shadow_opportunities
 from app.otc.collector import run_cycle as run_otc_cycle
-from app.otc.config import CONFIG, REAL_MARKET_PROFILE, TIMEFRAME_SECONDS, enabled_symbols
+from app.otc.config import (
+    CONFIG,
+    REAL_MARKET_PROFILE,
+    TIMEFRAME_SECONDS,
+    enabled_market_symbols,
+    enabled_symbols,
+)
 from app.otc.market_collector import collect_market_symbol
 from app.collector.service import run_poll_cycle
 from app.config import get_settings
@@ -49,6 +55,11 @@ _last_polled: dict[str, datetime] = {}
 # Phase 12's evaluation cadence. Named rather than inline so the scheduler
 # and the engine's own config cannot drift apart unnoticed.
 OTC_TICK_SECONDS = TIMEFRAME_SECONDS[CONFIG.evaluation_timeframe]
+
+# The scheduler's own tick for the real-market engine: cadence.TICK_SECONDS,
+# not a second copy of it. Two numbers meaning the same thing drift, and the
+# drift shows up as an asset quietly polling slower than its config says.
+MARKET_TICK_SECONDS = TICK_SECONDS
 
 
 def build_provider() -> MarketDataProvider:
@@ -189,8 +200,10 @@ async def run_market_engine() -> None:
     now = datetime.now(timezone.utc)
     evaluated, failed, skipped = 0, 0, 0
 
-    for asset in Asset:
-        symbol = asset.value
+    # Only the instruments the engine is actually working on. Iterating the
+    # whole Asset enum would poll five series while one is being tuned, and
+    # spend the quota that pays for the faster cadence.
+    for symbol in enabled_market_symbols():
         # Per-asset cadence, not one interval for everything. Polling all
         # five every five minutes costs 1440 requests a day against a free
         # tier of 800 -- the quota is exhausted around lunchtime and every
@@ -329,16 +342,16 @@ def start_scheduler() -> AsyncIOScheduler:
         _scheduler.add_job(
             run_market_engine,
             "interval",
-            seconds=REAL_MARKET_PROFILE.evaluation_seconds,
+            seconds=MARKET_TICK_SECONDS,
             id="market_engine",
             max_instances=1,
             coalesce=True,
         )
-        symbols = [a.value for a in Asset]
+        symbols = enabled_market_symbols()
         estimate = daily_request_estimate(symbols)
         logger.info(
             "5-minute engine started (tick=%ss, per-asset cadence) for %s",
-            REAL_MARKET_PROFILE.evaluation_seconds, ", ".join(symbols),
+            MARKET_TICK_SECONDS, ", ".join(symbols) or "(no instrument enabled)",
         )
         # Printed every start, because exceeding it does not degrade -- the
         # provider simply stops answering and every asset freezes at once.

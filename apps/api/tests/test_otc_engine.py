@@ -235,10 +235,14 @@ class FingerprintTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    def test_exactly_one_instrument_is_enabled(self):
-        """Phase 1 is a hard constraint, not a preference."""
-        from app.otc.config import enabled_symbols
-        self.assertEqual(enabled_symbols(), ["DERIV_V75"])
+    def test_exactly_one_instrument_is_enabled_across_both_engines(self):
+        """Phase 1 is a hard constraint, not a preference: ONE price series
+        under test at a time, whichever engine it belongs to. Counting only
+        one engine's list would let a second instrument run unnoticed."""
+        from app.otc.config import enabled_market_symbols, enabled_symbols
+
+        running = enabled_symbols() + enabled_market_symbols()
+        self.assertEqual(running, ["XAUUSD"], f"expected one instrument, got {running}")
 
     def test_expiry_is_five_minutes(self):
         self.assertEqual(CONFIG.expiry_seconds, 300)

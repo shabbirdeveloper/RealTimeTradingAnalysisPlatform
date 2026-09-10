@@ -39,7 +39,11 @@ class OTCSymbolConfig:
 # Exactly one enabled instrument, per Phase 1. The others are declared so
 # that adding a pair later is a flag flip plus a backtest, not a refactor.
 OTC_SYMBOLS: dict[str, OTCSymbolConfig] = {
-    "DERIV_V75": OTCSymbolConfig("DERIV_V75", "DERIV", "R_75", enabled=True),
+    # Off while the effort is concentrated on XAU/USD. Costs no quota when
+    # enabled (Deriv's feed is free), but a second instrument producing
+    # decisions is a second thing to interpret, and the point of one pair is
+    # that there is nothing else to look at.
+    "DERIV_V75": OTCSymbolConfig("DERIV_V75", "DERIV", "R_75", enabled=False),
     "DERIV_V50": OTCSymbolConfig("DERIV_V50", "DERIV", "R_50", enabled=False),
     "DERIV_V25": OTCSymbolConfig("DERIV_V25", "DERIV", "R_25", enabled=False),
 }
@@ -47,6 +51,31 @@ OTC_SYMBOLS: dict[str, OTCSymbolConfig] = {
 
 def enabled_symbols() -> list[str]:
     return [s for s, cfg in OTC_SYMBOLS.items() if cfg.enabled]
+
+
+# Real-market instruments, and which one the engine is actually working on.
+#
+# ONE pair, per the brief's Phase 1: the whole engineering effort goes into a
+# single price series until its accuracy is measured and settled. The others
+# stay declared rather than deleted, so adding one back is a flag plus a
+# backtest rather than a refactor -- and so nobody has to guess later which
+# instruments this engine was ever tuned against.
+#
+# Concentrating also buys real headroom. Five assets on a 5-minute cadence
+# cost 1440 provider requests a day against a free tier of 800; one asset
+# costs a fraction of that, which is what pays for the faster cadence in
+# cadence.py.
+MARKET_SYMBOLS: dict[str, bool] = {
+    "XAUUSD": True,
+    "EURUSD": False,
+    "GBPUSD": False,
+    "BTCUSD": False,
+    "ETHUSD": False,
+}
+
+
+def enabled_market_symbols() -> list[str]:
+    return [s for s, on in MARKET_SYMBOLS.items() if on]
 
 
 @dataclass(frozen=True)

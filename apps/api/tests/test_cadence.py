@@ -52,11 +52,11 @@ class BudgetTests(unittest.TestCase):
 
 class CadenceTests(unittest.TestCase):
     def test_forex_is_faster_during_london_and_new_york(self):
-        # The quiet interval was widened from 900 to 1800 to pay for the
-        # 5-minute engine: active hours are where a 300-second expiry is
-        # actually traded, so that is where the budget goes.
-        self.assertEqual(interval_seconds("EURUSD", at(10)), 300)
-        self.assertEqual(interval_seconds("EURUSD", at(3)), 1800)
+        # Two minutes active, five quiet -- affordable because ONE pair is
+        # enabled. Active hours are where a 300-second expiry is actually
+        # traded, so that is where the budget goes.
+        self.assertEqual(interval_seconds("EURUSD", at(10)), 120)
+        self.assertEqual(interval_seconds("EURUSD", at(3)), 300)
         self.assertGreater(interval_seconds("EURUSD", at(3)), interval_seconds("EURUSD", at(10)))
 
     def test_crypto_cadence_does_not_change_with_the_session(self):
@@ -98,7 +98,7 @@ class DueTests(unittest.TestCase):
 
     def test_not_due_until_the_interval_has_passed(self):
         now = at(10, 3)
-        self.assertFalse(should_poll("EURUSD", now, now - timedelta(seconds=120)))
+        self.assertFalse(should_poll("EURUSD", now, now - timedelta(seconds=60)))
         self.assertTrue(should_poll("EURUSD", now, now - timedelta(seconds=300)))
 
     def test_a_hair_early_still_counts(self):
@@ -127,8 +127,12 @@ class BudgetTests(unittest.TestCase):
     def test_configured_cadence_fits_the_free_tier(self):
         from app.collector.cadence import FREE_TIER_REQUESTS_PER_DAY, daily_request_estimate
 
-        symbols = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"]
-        estimate = daily_request_estimate(symbols)
+        # The ENABLED set, not every declared instrument. The cadence is
+        # sized for what actually runs; measuring the declared list would
+        # fail for instruments nobody is polling.
+        from app.otc.config import enabled_market_symbols
+
+        estimate = daily_request_estimate(enabled_market_symbols())
         self.assertLess(
             estimate, FREE_TIER_REQUESTS_PER_DAY,
             f"{estimate:.0f} requests/day exceeds the {FREE_TIER_REQUESTS_PER_DAY}/day tier",
@@ -142,10 +146,52 @@ class BudgetTests(unittest.TestCase):
         naive = 5 * (24 * 3600 / 300)
         self.assertGreater(naive, FREE_TIER_REQUESTS_PER_DAY)
 
-    def test_forex_still_gets_five_minutes_when_it_matters(self):
+    def test_forex_gets_two_minutes_when_it_matters(self):
         from datetime import datetime, timezone
 
         from app.collector.cadence import interval_seconds
 
         london = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
-        self.assertEqual(interval_seconds("EURUSD", london), 300)
+        self.assertEqual(interval_seconds("EURUSD", london), 120)
+
+
+class SinglePairTests(unittest.TestCase):
+    """One pair, and a cadence sized for one pair.
+
+    These two settings are coupled: the two-minute cadence is only
+    affordable because a single instrument is enabled. A test that checks
+    the budget without checking the instrument count would pass right up
+    until someone re-enabled a pair and silently blew the quota.
+    """
+
+    def test_exactly_one_market_instrument_is_enabled(self):
+        from app.otc.config import enabled_market_symbols
+
+        self.assertEqual(enabled_market_symbols(), ["XAUUSD"])
+
+    def test_the_enabled_set_fits_the_free_tier_with_room(self):
+        from app.collector.cadence import FREE_TIER_REQUESTS_PER_DAY, daily_request_estimate
+        from app.otc.config import enabled_market_symbols
+
+        estimate = daily_request_estimate(enabled_market_symbols())
+        self.assertLess(estimate, FREE_TIER_REQUESTS_PER_DAY * 0.75,
+                        f"{estimate:.0f}/day leaves no headroom for a retry or a backfill")
+
+    def test_re_enabling_the_old_five_would_exceed_the_tier(self):
+        """Documents the trap: this cadence is affordable for one pair and
+        not for five. Anyone turning instruments back on has to widen the
+        cadence in the same change."""
+        from app.collector.cadence import FREE_TIER_REQUESTS_PER_DAY, daily_request_estimate
+
+        five = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"]
+        self.assertGreater(daily_request_estimate(five), FREE_TIER_REQUESTS_PER_DAY)
+
+    def test_gold_gets_two_minutes_when_it_actually_moves(self):
+        from datetime import datetime, timezone
+
+        from app.collector.cadence import interval_seconds
+
+        london = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+        asian = datetime(2026, 9, 11, 3, 0, tzinfo=timezone.utc)
+        self.assertEqual(interval_seconds("XAUUSD", london), 120)
+        self.assertEqual(interval_seconds("XAUUSD", asian), 300)

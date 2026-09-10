@@ -298,7 +298,8 @@ def report(r: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backtest the 5-minute engine on stored candles")
-    parser.add_argument("--symbol", default="DERIV_V75")
+    parser.add_argument("--symbol", default="XAUUSD",
+                        help="the instrument under test (default: the enabled pair)")
     parser.add_argument("--days", type=int, default=3)
     parser.add_argument("--threshold", type=int, default=CONFIG.minimum_score)
     parser.add_argument("--separation", type=int, default=CONFIG.minimum_directional_difference)
