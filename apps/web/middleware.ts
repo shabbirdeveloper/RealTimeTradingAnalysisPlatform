@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { CookieOptions } from "@supabase/ssr";
 
 /**
  * Refreshes the Supabase auth session on every request that isn't a static
@@ -72,6 +72,20 @@ async function guard(request: NextRequest) {
   }
 
   let response = NextResponse.next({ request });
+
+  // Imported HERE, not at the top of the file.
+  //
+  // A wrapper around the whole function body did not stop
+  // MIDDLEWARE_INVOCATION_FAILED, which narrowed it to the one thing a
+  // try/catch inside the function cannot reach: the module failing to LOAD.
+  // @supabase/ssr pulls in code the Edge runtime will not always accept,
+  // and when the import fails the middleware never runs at all -- so every
+  // request on the site, including the landing page, returns 500.
+  //
+  // A dynamic import turns that from an unreachable startup failure into an
+  // ordinary caught error, which the outer boundary then degrades the same
+  // way as every other: deny protected routes, serve public ones.
+  const { createServerClient } = await import("@supabase/ssr");
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
