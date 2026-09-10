@@ -1,5 +1,3 @@
-import "server-only";
-
 /**
  * Which collectors the backend is actually running.
  *
@@ -14,6 +12,16 @@ import "server-only";
  * 3am, the other is nothing at all. This is the same distinction as
  * stale-versus-closed on the weekend cards, and getting it wrong has cost
  * this project real hours.
+ *
+ * Read server-side ONLY, and deliberately WITHOUT the `server-only`
+ * package: a dependency that is not in the lockfile makes Vercel's
+ * `npm ci` fail outright, which is a worse failure than the one that
+ * guard prevents.
+ *
+ * The guarantee is by construction instead: the variable carries no
+ * NEXT_PUBLIC_ prefix, so Next.js never inlines it into the browser
+ * bundle. A client component importing this reads `undefined` and
+ * falls through to the safe default rather than leaking anything.
  *
  * Read server-side only. It mirrors the API's own
  * PUBLIC_MARKET_COLLECTOR_ENABLED, so the two must be set together --
