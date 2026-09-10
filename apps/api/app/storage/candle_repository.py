@@ -173,6 +173,9 @@ def asset_id_for_symbol(symbol: str) -> str:
 
 _UPSERT_BATCH = 500
 
+# PostgREST's own default response cap. Reads are paged in these steps.
+_READ_PAGE = 1000
+
 
 def upsert_otc_candles(
     symbol: str,
@@ -236,16 +239,37 @@ def fetch_recent_otc_candles(symbol: str, timeframe: str, limit: int) -> list[di
     """Most recent stored OTC bars, oldest-first, as plain dicts — the shape
     the feature engine and replay slicer already take."""
     asset_id = asset_id_for_symbol(symbol)
-    rows = (
-        get_service_client().table("candles")
-        .select("open_time, open, high, low, close")
-        .eq("asset_id", asset_id)
-        .eq("timeframe", timeframe)
-        .order("open_time", desc=True)
-        .limit(limit)
-        .execute()
-        .data
-    ) or []
+    client = get_service_client()
+
+    # Paged, because .limit() is a ceiling and not a promise: PostgREST caps
+    # every response at its own max-rows -- 1000 by default -- and says
+    # nothing about having done so. Asking for 5000 M1 bars returned 1000,
+    # which is seventeen hours, which is why a backtest run against forty
+    # thousand stored bars measured exactly the same 0.7-day window as one
+    # run against nine hundred. The reply looked like a complete answer to
+    # the question asked, and was a complete answer to a smaller one.
+    #
+    # app/backtesting/repository.py already pages this way. This function
+    # did not, and nothing downstream could tell the difference.
+    rows: list[dict] = []
+    offset = 0
+    while len(rows) < limit:
+        want = min(_READ_PAGE, limit - len(rows))
+        page = (
+            client.table("candles")
+            .select("open_time, open, high, low, close")
+            .eq("asset_id", asset_id)
+            .eq("timeframe", timeframe)
+            .order("open_time", desc=True)
+            .range(offset, offset + want - 1)
+            .execute()
+            .data
+        ) or []
+        rows.extend(page)
+        # A short page is the only honest end-of-data signal available.
+        if len(page) < want:
+            break
+        offset += len(page)
     out = [
         {
             "open_time": datetime.fromisoformat(r["open_time"].replace("Z", "+00:00")),
