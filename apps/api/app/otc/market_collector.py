@@ -37,7 +37,7 @@ from app.collector.market_hours import is_market_open
 from app.market_data.base import MarketDataProvider
 from app.market_data.closed_bars import split_closed
 from app.market_data.errors import MarketDataError
-from app.otc.config import REAL_MARKET_PROFILE
+from app.otc.config import REAL_MARKET_PROFILE, TIMEFRAME_SECONDS
 from app.otc.engine import evaluate
 from app.otc.health import FeedStatus, MarketDataHealth
 from app.otc.repository import store_decision
@@ -109,6 +109,8 @@ async def collect_market_symbol(
         if derived:
             candles[name] = [_as_dict(c) for c in derived]
 
+    _store(symbol, candles, provider.name)
+
     health = _health_from_bars(symbol, closed[-1].open_time, len(closed), now)
     logger.info(
         "[MKT_CANDLE] %s %s | feed %s (%s)",
@@ -135,6 +137,65 @@ async def collect_market_symbol(
         )
 
     store_decision(decision)
+
+
+# Newest bar stored per (symbol, timeframe), so a cycle re-sends only what
+# is new instead of the whole 900-bar window every two minutes.
+_STORED_THROUGH: dict[tuple[str, str], datetime] = {}
+
+# How far back to re-send anyway. A vendor that revises or backfills a bar
+# after publishing it would otherwise be missed forever, because the newest
+# timestamp had already moved past it.
+_OVERLAP_BARS = 3
+
+
+def _store(symbol: str, candles: dict[str, list[dict]], provider_name: str) -> None:
+    """Persist what this cycle fetched.
+
+    WHY THIS EXISTS
+    ---------------
+    It did not, and that was the whole reason the backtest could not run.
+    This collector fetched 900 M1 bars, aggregated M3/M5/M15 from them,
+    handed them to evaluate() and dropped them. Nothing reached the
+    database, so `otc_backtest.py` -- which replays only what was SAVED --
+    reported "no stored M3/M1 candles" no matter how long the collector had
+    been running. Days of history went through this function and none of it
+    survived the cycle it arrived in.
+
+    Bars are stored with feed_kind PUBLIC_MARKET. They are real market data
+    and must never be readable as broker-OTC bars: the two disagree by tens
+    of pips at the same instant, and a mixed series would score one against
+    the other without anything downstream being able to tell.
+    """
+    from app.storage.candle_repository import upsert_otc_candles
+
+    for timeframe, rows in candles.items():
+        if not rows:
+            continue
+
+        seen = _STORED_THROUGH.get((symbol, timeframe))
+        if seen is not None:
+            cutoff = seen - timedelta(seconds=_OVERLAP_BARS * TIMEFRAME_SECONDS[timeframe])
+            rows = [r for r in rows if r["open_time"] > cutoff]
+        if not rows:
+            continue
+
+        try:
+            upsert_otc_candles(
+                symbol, timeframe, rows,
+                source=provider_name, feed_kind="PUBLIC_MARKET",
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Storage failing must not stop the engine from deciding: a
+            # signal the user can act on now is worth more than the history
+            # that would have let us score it later. But it is logged loudly,
+            # because silent storage failure is exactly how this collector
+            # ran for days with nothing to show for it.
+            logger.warning("[MKT_CANDLE] %s %s storage failed: %s", symbol, timeframe, exc)
+            continue
+
+        _STORED_THROUGH[(symbol, timeframe)] = rows[-1]["open_time"]
+        logger.info("[MKT_STORE] %s %s +%d bars", symbol, timeframe, len(rows))
 
 
 def _as_dict(candle) -> dict:

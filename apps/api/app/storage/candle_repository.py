@@ -46,7 +46,13 @@ def upsert_candles(
 ) -> int:
     """Upserts `candles` for one asset+timeframe. Returns the number of
     rows sent (Postgres doesn't report how many actually changed through
-    a plain upsert, so this is a send-count, not a diff-count)."""
+    a plain upsert, so this is a send-count, not a diff-count).
+
+    `Asset` is the public-market enum, so every bar reaching here is real
+    market data and is labelled PUBLIC_MARKET. It used to write no
+    feed_kind at all, leaving genuine market bars indistinguishable from
+    unlabelled rows of unknown origin.
+    """
     if not candles:
         return 0
 
@@ -64,6 +70,7 @@ def upsert_candles(
             "close": str(candle.close),
             "volume": str(candle.volume) if candle.volume is not None else None,
             "source": source,
+            "feed_kind": "PUBLIC_MARKET",
         }
         for candle in candles
     ]
@@ -170,13 +177,21 @@ def upsert_otc_candles(
     bars: list[dict],
     *,
     source: str,
+    feed_kind: str = "BROKER_OTC",
 ) -> int:
-    """Stores closed broker-OTC bars.
+    """Stores closed bars.
 
     `feed_kind` is written on every row. It is what lets a later reader prove
     a bar came from the broker's own generator rather than from a public
     market -- the check that stops a real EUR/USD candle ever being scored
     against a broker instrument of a similar name.
+
+    It therefore has to be told the truth. The default suits the broker feed,
+    which is what this was written for; the public-market collector passes
+    PUBLIC_MARKET. Letting a Twelve Data bar default into BROKER_OTC would
+    write a lie into the one column whose whole purpose is provenance, and
+    the lie would be invisible afterwards -- the row would look exactly like
+    a broker bar.
     """
     if not bars:
         return 0
@@ -193,7 +208,7 @@ def upsert_otc_candles(
             "close": str(bar["close"]),
             "volume": None,
             "source": source,
-            "feed_kind": "BROKER_OTC",
+            "feed_kind": feed_kind,
         }
         for bar in bars
     ]
