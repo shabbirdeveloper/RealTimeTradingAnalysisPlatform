@@ -27,13 +27,14 @@ export default async function EnginePage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Engine</h1>
         <p className="text-sm text-muted-foreground">
-          The 5-minute OTC engine, cycle by cycle — including every setup it declined.
+          The 5-minute engine on XAU/USD, cycle by cycle — including every setup it declined.
         </p>
       </div>
 
       <div className="rounded-lg border border-border bg-card/40 px-3.5 py-2.5 text-xs leading-relaxed text-muted-foreground">
-        A high decline count is the engine working, not failing. It evaluates
-        every 30 seconds and publishes only when the evidence clears both the
+        A high decline count is the engine working, not failing. It re-reads
+        XAU/USD about every two minutes while the market is active (every five
+        when it is quiet) and publishes only when the evidence clears both the
         score floor and the separation floor, so most cycles end in no trade.
         The figures here are counted from stored decisions — nothing is estimated.
       </div>

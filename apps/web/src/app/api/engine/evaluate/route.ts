@@ -13,12 +13,27 @@ import { createClient } from "@/lib/supabase/server";
  * so an unreachable engine returns a plain explanation rather than a 500 --
  * "the engine is not reachable from here" and "the engine crashed" need
  * different responses from whoever reads it.
+ *
+ * And a third state, which the first message used to be wrong about: this
+ * route running in a DEPLOYED site with no ENGINE_API_URL set. The default
+ * address is 127.0.0.1, which on Vercel means Vercel's own container --
+ * never the operator's PC. Telling that reader to "start the collector"
+ * sends them to restart something that is already running and cannot help,
+ * which is the same wrong diagnosis this project has paid for repeatedly.
+ * Starting the engine only fixes this when the site is running on the same
+ * machine as the engine.
  */
 
 export const dynamic = "force-dynamic";
 
 const ENGINE_URL = process.env.ENGINE_API_URL ?? "http://127.0.0.1:8000";
 const TIMEOUT_MS = 25_000;
+
+/** Deployed, with no address configured: the loopback default can only ever
+ *  reach this server, so no local engine is reachable however healthy it is. */
+function unreachableBecauseDeployed(): boolean {
+  return !process.env.ENGINE_API_URL && Boolean(process.env.VERCEL);
+}
 
 export async function POST(request: Request) {
   // Signed in, or nothing runs. This endpoint causes real provider
@@ -63,7 +78,9 @@ export async function POST(request: Request) {
       {
         error: aborted
           ? "The engine did not answer within 25 seconds. It may be fetching candles — try again shortly."
-          : "The engine is not reachable from here. It runs alongside the collector; start it, or set ENGINE_API_URL if it runs elsewhere.",
+          : unreachableBecauseDeployed()
+            ? "This is the deployed site, and the engine runs on your own machine — the two cannot reach each other. Nothing is broken and starting the collector will not change it. The scheduler keeps analysing every cycle and those results appear below; on-demand analysis needs the engine reachable over the network (set ENGINE_API_URL), or run the site locally."
+            : "The engine is not reachable from here. It runs alongside the collector on this machine; start it, or set ENGINE_API_URL if it runs elsewhere.",
       },
       { status: 503 }
     );
