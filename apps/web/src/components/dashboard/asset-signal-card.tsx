@@ -8,7 +8,7 @@ import { PriceTicker } from "@/components/shared/price-ticker";
 import { ASSET_CONFIGS } from "@/data/assets";
 import type { DataStatus, Signal } from "@/types";
 import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
-import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Minus, PauseCircle } from "lucide-react";
 import { MarketRead } from "@/components/dashboard/market-read";
 import { MarketClosedNotice } from "@/components/dashboard/market-closed-notice";
 import { isMarketOpen } from "@/lib/market-hours";
@@ -45,6 +45,12 @@ export function AssetSignalCard({
   const closed = now !== null && !isMarketOpen(signal.asset, now);
   const isNoTrade = signal.direction === "NO_TRADE";
   const isAplusplus = signal.grade === "A++";
+  // Spec section 42. The STALE pill in the corner was the only thing saying
+  // this data was old, while the body went on showing PUT, a grade and a
+  // best expiry -- which is a tradeable instruction. A pill does not undo a
+  // direction badge; a reader takes the loudest element on the card, and the
+  // loudest element was the trade.
+  const actionable = !dataStatus || dataStatus === "LIVE" || dataStatus === "DELAYED";
 
   const accent =
     signal.direction === "CALL" ? "bg-call" : signal.direction === "PUT" ? "bg-put" : "bg-notrade/70";
@@ -92,6 +98,17 @@ export function AssetSignalCard({
 
           {closed ? (
             <MarketClosedNotice asset={signal.asset} />
+          ) : !actionable ? (
+            <div className="space-y-2 rounded-md border border-dashed border-notrade/40 bg-notrade/5 p-3">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-notrade">
+                <PauseCircle className="h-3.5 w-3.5" /> Signal generation paused
+              </span>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {dataStatus === "OFFLINE"
+                  ? "No recent candle has arrived, so nothing here is current. The price above is the last one recorded."
+                  : "The last decision is too old to act on. The price above is the last one recorded, not a live quote."}
+              </p>
+            </div>
           ) : isNoTrade ? (
             <div className="space-y-3 rounded-md border border-dashed border-border bg-secondary/30 p-3">
               <DirectionBadge direction="NO_TRADE" />

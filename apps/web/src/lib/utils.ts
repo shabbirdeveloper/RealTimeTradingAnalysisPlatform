@@ -1,3 +1,4 @@
+import type { DataStatus } from "@/types";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -113,7 +114,7 @@ export function formatRelative(iso: string | null | undefined, now: number = Dat
  * visitor could act on. These four states keep "recent enough to act on",
  * "getting old", "do not act on this" and "nothing is arriving" apart.
  */
-export type DataStatus = "LIVE" | "DELAYED" | "STALE" | "OFFLINE";
+export type { DataStatus };
 
 export function dataStatus(iso: string | null | undefined, now: number = Date.now()): DataStatus {
   if (!iso) return "OFFLINE";

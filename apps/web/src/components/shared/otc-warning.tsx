@@ -25,7 +25,8 @@ export function OtcWarning() {
         computed from real exchange prices. Your broker&apos;s{" "}
         <strong className="font-semibold">&ldquo;OTC&rdquo; weekend pairs are a different, broker-generated price
         series</strong> — a signal from this platform says nothing about them, even though it will still look like a
-        valid one. When forex is closed, use the 24/7 crypto pairs instead.
+        valid one. Gold does not trade at the weekend, and this platform has nothing to offer then: no signal is the
+        correct answer, not a substitute instrument.
       </span>
     </div>
   );

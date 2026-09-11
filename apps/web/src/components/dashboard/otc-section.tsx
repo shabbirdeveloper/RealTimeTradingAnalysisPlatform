@@ -23,6 +23,11 @@ export function OtcSection({
   signals: Record<string, Signal | null>;
   emptyReason?: string | null;
 }) {
+  // Not one broker-generated instrument is enabled. Rendering the heading,
+  // the explanation and an empty body would describe a part of the product
+  // that is not running -- the same mistake as a stale card, in section form.
+  if (OTC_ASSET_LIST.length === 0) return null;
+
   const present = OTC_ASSET_LIST.filter((symbol) => signals[symbol]);
 
   return (
