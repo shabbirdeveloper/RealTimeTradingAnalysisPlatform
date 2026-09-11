@@ -235,6 +235,14 @@ export async function getLatestOtcSignals(): Promise<OtcSignalsResult> {
     OTC_ASSET_LIST.map((a) => [a, null])
   );
 
+  // No broker-generated instrument is enabled. `.in()` on an empty list is
+  // a query asking for nothing, and the empty result would then be reported
+  // as "no signals found" -- the wrong diagnosis for a section that is
+  // simply switched off.
+  if (OTC_ASSET_LIST.length === 0) {
+    return { signals, emptyReason: null };
+  }
+
   try {
     const supabase = await createClient();
     const { data, error } = await supabase

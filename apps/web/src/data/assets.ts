@@ -73,8 +73,23 @@ export const ASSET_CONFIGS: Record<AssetSymbol, AssetConfig> = {
   },
 };
 
-/** Real-market instruments. Drives the main dashboard grid. */
-export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"];
+/**
+ * Real-market instruments the platform currently RUNS. Drives the main
+ * dashboard grid, the analyzer, the history filters and every "is this a
+ * symbol we know" check.
+ *
+ * One instrument, deliberately. Five cards of which four were never being
+ * analysed is not a product with five instruments -- it is one instrument
+ * and four pieces of stale furniture, and a visitor cannot tell which is
+ * which. Effort is on XAU/USD until its accuracy is measured rather than
+ * assumed.
+ *
+ * MIRRORS apps/api/app/otc/config.py MARKET_SYMBOLS. The two must be
+ * changed together: this list decides what the site renders, that one
+ * decides what the engine analyses, and nothing checks them against each
+ * other. A symbol here but not there is a permanently stale card.
+ */
+export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD"];
 
 /**
  * Broker-generated instruments, listed separately and rendered in their own
@@ -82,7 +97,19 @@ export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD", "EURUSD", "GBPUSD", "B
  * into every real-market total on the page — which is exactly what spec
  * section 72 forbids, and would have been invisible once it happened.
  */
-export const OTC_ASSET_LIST: OtcAssetSymbol[] = ["DERIV_V75", "DERIV_V50", "DERIV_V25"];
+export const OTC_ASSET_LIST: OtcAssetSymbol[] = [];
+
+/**
+ * Every broker-generated symbol this codebase knows about, enabled or not.
+ *
+ * Separate from OTC_ASSET_LIST because the two answer different questions.
+ * That one asks "what should this page render"; this one asks "is this
+ * symbol a real market" -- and the second answer must not change when an
+ * instrument is switched off. A stored DERIV_V75 decision still has to be
+ * labelled synthetic wherever it surfaces, or spec section 72's rule
+ * against mixing generated prices with market ones is broken by omission.
+ */
+export const SYNTHETIC_SYMBOLS: OtcAssetSymbol[] = ["DERIV_V75", "DERIV_V50", "DERIV_V25"];
 
 /** Assets that trade continuously (no weekend close). Mirrors CRYPTO_SYMBOLS in apps/api/app/instruments.py. */
 export const ALWAYS_OPEN_ASSETS: AssetSymbol[] = ["BTCUSD", "ETHUSD"];

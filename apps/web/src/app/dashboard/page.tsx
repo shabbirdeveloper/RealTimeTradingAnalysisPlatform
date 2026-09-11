@@ -72,7 +72,11 @@ export default async function DashboardHomePage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Live analysis across your {ASSET_LIST.length} configured instruments.</p>
+        <p className="text-sm text-muted-foreground">
+          {ASSET_LIST.length === 1
+            ? "Live analysis on XAU/USD — one instrument, measured before any others are added."
+            : `Live analysis across your ${ASSET_LIST.length} configured instruments.`}
+        </p>
       </div>
 
       <div className="flex items-start gap-2.5 rounded-lg border border-notrade/20 bg-notrade-muted/40 px-3.5 py-2 text-xs text-notrade-foreground/90">
@@ -140,10 +144,9 @@ export default async function DashboardHomePage() {
             <strong className="font-semibold text-foreground">
               The real-market collector is switched off.
             </strong>{" "}
-            The five instruments below are not being analysed right now, so their
-            prices and decisions are the last ones recorded — not live. The engine
-            is running on the broker-generated instrument further down this page.
-            Nothing here is broken.
+            Nothing below is being analysed right now, so the prices and decisions
+            shown are the last ones recorded — not live. Start the collector to
+            resume analysis. Nothing here is broken.
           </span>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { ASSET_LIST, OTC_ASSET_LIST } from "@/data/assets";
 import type { AssetSymbol } from "@/types";
 
 /**
@@ -33,7 +34,14 @@ export async function getPublicPreview(): Promise<PreviewRow[]> {
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("public_signal_preview");
     if (error || !data) return [];
-    return (data as Array<Record<string, unknown>>).map((r) => ({
+    // The function returns every instrument that has ever been analysed.
+    // The page must show only the ones being analysed NOW: a tab for a
+    // switched-off instrument is a promise the engine is not keeping, and
+    // the visitor has no way to know which tabs are which.
+    const enabled = new Set<string>([...ASSET_LIST, ...OTC_ASSET_LIST]);
+    return (data as Array<Record<string, unknown>>)
+      .filter((r) => enabled.has(String(r.symbol)))
+      .map((r) => ({
       symbol: r.symbol as AssetSymbol,
       displayName: (r.display_name as string) ?? (r.symbol as string),
       hasSignal: Boolean(r.has_signal),

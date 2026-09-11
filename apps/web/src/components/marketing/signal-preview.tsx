@@ -4,11 +4,12 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn, formatExpiry, formatRelative, isCheckStale } from "@/lib/utils";
+import { cn, dataStatus, formatExpiry, formatRelative, isActionable } from "@/lib/utils";
 import type { PreviewRow } from "@/lib/public-preview";
-import { OTC_ASSET_LIST } from "@/data/assets";
+import { SYNTHETIC_SYMBOLS } from "@/data/assets";
 import type { OtcAssetSymbol } from "@/types";
-import { FlaskConical, Lock, Minus, Radio } from "lucide-react";
+import type { DataStatus } from "@/lib/utils";
+import { FlaskConical, Lock, Minus, PauseCircle, Radio } from "lucide-react";
 
 /**
  * A synthetic index is broker-generated, not a real market. Spec section 72
@@ -19,7 +20,7 @@ import { FlaskConical, Lock, Minus, Radio } from "lucide-react";
  * strip is what someone reads before clicking anything.
  */
 function isSynthetic(symbol: string): boolean {
-  return OTC_ASSET_LIST.includes(symbol as OtcAssetSymbol);
+  return SYNTHETIC_SYMBOLS.includes(symbol as OtcAssetSymbol);
 }
 
 /**
@@ -53,7 +54,8 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
   }
 
   const row = rows[Math.min(active, rows.length - 1)]!;
-  const stale = isCheckStale(row.lastEvaluatedAt, Date.now(), 30);
+  const status = dataStatus(row.lastEvaluatedAt);
+  const live = isActionable(status);
   const bar = 78;
 
   return (
@@ -89,19 +91,31 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
                 </span>
               )}
             </p>
-            <p className={cn("text-xs", stale ? "text-destructive" : "text-muted-foreground")}>
-              {stale ? "last checked " : "checked "}
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <StatusDot status={status} />
+              {live ? "checked " : "last checked "}
               {formatRelative(row.lastEvaluatedAt)}
             </p>
           </div>
-          {row.marketRegime && (
+          {live && row.marketRegime && (
             <Badge variant="outline" className="capitalize">
               {row.marketRegime.replace(/_/g, " ").toLowerCase()}
             </Badge>
           )}
         </div>
 
-        {row.hasSignal ? (
+        {!live ? (
+          <div className="space-y-2 rounded-md border border-dashed border-notrade/40 bg-notrade/5 p-3.5">
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-notrade">
+              <PauseCircle className="h-3.5 w-3.5" /> Signal generation paused
+            </span>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {status === "OFFLINE"
+                ? "No decision has arrived for this instrument recently, so there is nothing current to show. The engine evaluates every five minutes when its data feed is healthy."
+                : "The last decision is too old to act on. It is not shown as open, because the market it described has moved on."}
+            </p>
+          </div>
+        ) : row.hasSignal ? (
           <div className="space-y-3 rounded-md border border-primary/30 bg-primary/5 p-3.5">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary">
@@ -131,7 +145,7 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
           </div>
         )}
 
-        {row.callScore !== null && row.putScore !== null && (
+        {live && row.callScore !== null && row.putScore !== null && (
           <div className="space-y-1.5">
             <Side label="Call" value={row.callScore} tone="call" />
             <Side label="Put" value={row.putScore} tone="put" />
@@ -142,7 +156,7 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
           </div>
         )}
 
-        {row.technicalScore !== null && (
+        {live && row.technicalScore !== null && (
           <div>
             <div className="flex items-baseline justify-between text-[10.5px]">
               <span className="font-medium uppercase tracking-wider text-muted-foreground">
@@ -178,6 +192,22 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
         </Link>
       </CardContent>
     </Card>
+  );
+}
+
+/** Four states, four colours. A visitor should be able to tell at a glance
+ *  whether what follows is something to act on. */
+function StatusDot({ status }: { status: DataStatus }) {
+  const tone =
+    status === "LIVE" ? "bg-call"
+    : status === "DELAYED" ? "bg-notrade"
+    : status === "STALE" ? "bg-put"
+    : "bg-muted-foreground";
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className={cn("h-1.5 w-1.5 rounded-full", tone, status === "LIVE" && "animate-pulse")} />
+      <span className="font-medium uppercase tracking-wider text-[9.5px]">{status}</span>
+    </span>
   );
 }
 

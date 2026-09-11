@@ -35,8 +35,8 @@ export default async function LandingPage() {
             className="max-w-xl animate-in fade-in-0 slide-in-from-bottom-3 text-balance text-base text-muted-foreground duration-700 ease-out md:text-lg"
             style={{ animationDelay: "160ms" }}
           >
-            NorthFXTrade analyzes XAU/USD, EUR/USD and GBP/USD across four timeframes and returns CALL, PUT, or
-            NO TRADE — never a forced signal. You review it, then execute manually on your own platform.
+            NorthFXTrade analyzes XAU/USD across four timeframes and returns CALL, PUT, or NO TRADE —
+            never a forced signal. You review it, then execute manually on your own platform.
           </p>
           <div
             className="flex animate-in fade-in-0 slide-in-from-bottom-3 flex-wrap items-center justify-center gap-3 duration-700 ease-out"
@@ -49,7 +49,7 @@ export default async function LandingPage() {
             className="mt-6 flex animate-in fade-in-0 flex-wrap items-center justify-center gap-x-10 gap-y-4 duration-700 ease-out"
             style={{ animationDelay: "320ms" }}
           >
-            <Stat value={3} label="Focused assets" />
+            <Stat value={1} label="Focused asset" />
             <div className="hidden h-8 w-px bg-border sm:block" />
             <Stat value={4} label="Analysis timeframes" />
             <div className="hidden h-8 w-px bg-border sm:block" />

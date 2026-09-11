@@ -101,6 +101,36 @@ export function formatRelative(iso: string | null | undefined, now: number = Dat
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/**
+ * Spec section 42: every market object carries a status, and stale data is
+ * never shown as live.
+ *
+ * The engine re-evaluates a real-market asset every 300 seconds, so a
+ * decision a few minutes old is current and one an hour old describes a
+ * market that has moved on. A single boolean could not say which: the
+ * landing page was marking a decision red for being old while still
+ * rendering "Signal open" beside it, which reads as an open position a
+ * visitor could act on. These four states keep "recent enough to act on",
+ * "getting old", "do not act on this" and "nothing is arriving" apart.
+ */
+export type DataStatus = "LIVE" | "DELAYED" | "STALE" | "OFFLINE";
+
+export function dataStatus(iso: string | null | undefined, now: number = Date.now()): DataStatus {
+  if (!iso) return "OFFLINE";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "OFFLINE";
+  const minutes = (now - then) / 60_000;
+  if (minutes <= 10) return "LIVE";
+  if (minutes <= 30) return "DELAYED";
+  if (minutes <= 360) return "STALE";
+  return "OFFLINE";
+}
+
+/** STALE and OFFLINE both mean: do not present this as a current decision. */
+export function isActionable(status: DataStatus): boolean {
+  return status === "LIVE" || status === "DELAYED";
+}
+
 /** True when the engine has not re-confirmed a decision recently. */
 export function isCheckStale(iso: string | null | undefined, now: number = Date.now(), maxMinutes = 30): boolean {
   if (!iso) return true;
