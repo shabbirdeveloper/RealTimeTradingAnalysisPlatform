@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn, dataStatus, formatExpiry, formatRelative, isActionable } from "@/lib/utils";
 import type { PreviewRow } from "@/lib/public-preview";
 import { SYNTHETIC_SYMBOLS } from "@/data/assets";
+import { SCORE_FLOOR } from "@/data/thresholds";
 import type { OtcAssetSymbol } from "@/types";
 import type { DataStatus } from "@/lib/utils";
 import { FlaskConical, Lock, Minus, PauseCircle, Radio } from "lucide-react";
@@ -56,7 +57,7 @@ export function SignalPreview({ rows }: { rows: PreviewRow[] }) {
   const row = rows[Math.min(active, rows.length - 1)]!;
   const status = dataStatus(row.lastEvaluatedAt);
   const live = isActionable(status);
-  const bar = 78;
+  const bar = SCORE_FLOOR;
 
   return (
     <Card className="overflow-hidden">

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/shared/animated-number";
 import { PriceTicker } from "@/components/shared/price-ticker";
 import { ASSET_CONFIGS } from "@/data/assets";
+import { SCORE_FLOOR } from "@/data/thresholds";
 import type { DataStatus, Signal } from "@/types";
 import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus, PauseCircle } from "lucide-react";
@@ -127,21 +128,68 @@ export function AssetSignalCard({
                 <GradeBadge grade={signal.grade} />
               </div>
               <div className="flex items-end justify-between">
+                {/*
+                  A card has to give the reader something to judge the setup
+                  by. "Not available" gave them nothing, so the only number
+                  left was the grade -- and a bare B says neither how far
+                  above the bar this cleared nor by how little.
+
+                  It is NOT relabelled as confidence. Spec section 10 is
+                  explicit: a confidence percentage may only come from a
+                  calibrated model, and none exists yet (Phase 6). Printing
+                  the technical score with a % after it would be exactly the
+                  fabricated 90% the whole platform refuses to produce.
+
+                  So the real, computed number is shown as what it is: a
+                  score out of the floor it was judged against. 81/78 says
+                  "cleared, barely"; 94/78 says something else entirely.
+                  When calibration lands, the model's probability appears
+                  BESIDE this, not instead of it.
+                */}
                 <div>
-                  <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Confidence</p>
-                  <p className="font-mono-tabular text-lg font-semibold text-foreground">
-                    {signal.confidence !== null ? (
-                      <AnimatedNumber value={signal.confidence} suffix="%" />
-                    ) : (
-                      "Not available"
-                    )}
+                  <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {signal.confidence !== null ? "Model confidence" : "Setup score"}
                   </p>
+                  {signal.confidence !== null ? (
+                    <p className="font-mono-tabular text-lg font-semibold text-foreground">
+                      <AnimatedNumber value={signal.confidence} suffix="%" />
+                    </p>
+                  ) : (
+                    <p className="font-mono-tabular text-lg font-semibold text-foreground">
+                      {signal.technicalScore}
+                      <span className="text-sm font-normal text-muted-foreground"> / {SCORE_FLOOR}</span>
+                    </p>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">Best expiry</p>
                   <p className="font-mono-tabular text-lg font-semibold text-foreground">{formatExpiry(expirySecondsOf(signal))}</p>
                 </div>
               </div>
+
+              {/* How the two sides scored. A 92/8 split and a 54/46 split can
+                  reach the same total, and they are not the same setup. */}
+              {/* Loose != on purpose: these are optional fields, so undefined
+                  has to fall out here too, or the row renders "CALL undefined". */}
+              {signal.callScore != null && signal.putScore != null && (
+                <div className="flex items-center gap-2 border-t border-border/60 pt-2.5 text-[11px]">
+                  <span className="font-mono-tabular font-semibold text-call">CALL {signal.callScore}</span>
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-secondary">
+                    <div
+                      className="h-full rounded-full bg-call"
+                      style={{ width: `${Math.max(0, Math.min(100, signal.callScore))}%` }}
+                    />
+                  </div>
+                  <span className="font-mono-tabular font-semibold text-put">PUT {signal.putScore}</span>
+                </div>
+              )}
+
+              {signal.confidence === null && (
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  Technical score, not a model probability — calibrated confidence arrives with
+                  the trained models.
+                </p>
+              )}
             </div>
           )}
         </CardContent>
