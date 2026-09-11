@@ -39,11 +39,27 @@ class OTCSymbolConfig:
 # Exactly one enabled instrument, per Phase 1. The others are declared so
 # that adding a pair later is a flag flip plus a backtest, not a refactor.
 OTC_SYMBOLS: dict[str, OTCSymbolConfig] = {
-    # Off while the effort is concentrated on XAU/USD. Costs no quota when
-    # enabled (Deriv's feed is free), but a second instrument producing
-    # decisions is a second thing to interpret, and the point of one pair is
-    # that there is nothing else to look at.
-    "DERIV_V75": OTCSymbolConfig("DERIV_V75", "DERIV", "R_75", enabled=False),
+    # ON. This is the platform's broker-generated instrument, and the only
+    # one it can honestly have.
+    #
+    # The ask was an engine for a broker's OTC series: runs at weekends,
+    # unmoved by news, priced by the broker rather than a market. Quotex's
+    # Gold (OTC) is exactly that object -- and there is no permitted way to
+    # read its prices. Quotex publishes no market-data API, and every working
+    # client logs into the user's own account over an undocumented websocket,
+    # which the brief forbids (section 43) and which would put broker
+    # credentials in this codebase. See claude/quotex-otc-audit.md.
+    #
+    # Deriv's synthetic indices are the same category of object with the one
+    # property that matters: Deriv PUBLISHES the tick stream it settles its
+    # own contracts against. Analysis and outcome therefore read the same
+    # series -- which is the whole thing that makes a signal mean anything,
+    # and precisely what a Quotex OTC signal computed from real gold would
+    # not have had.
+    #
+    # Costs no provider quota: the Deriv feed is free and separate from
+    # Twelve Data's 800/day.
+    "DERIV_V75": OTCSymbolConfig("DERIV_V75", "DERIV", "R_75", enabled=True),
     "DERIV_V50": OTCSymbolConfig("DERIV_V50", "DERIV", "R_50", enabled=False),
     "DERIV_V25": OTCSymbolConfig("DERIV_V25", "DERIV", "R_25", enabled=False),
 }

@@ -92,12 +92,21 @@ export const ASSET_CONFIGS: Record<AssetSymbol, AssetConfig> = {
 export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD"];
 
 /**
- * Broker-generated instruments, listed separately and rendered in their own
- * section. Appending them to ASSET_LIST would have put a synthetic series
- * into every real-market total on the page — which is exactly what spec
- * section 72 forbids, and would have been invisible once it happened.
+ * Broker-generated instruments the platform currently RUNS, rendered in
+ * their own section. Appending them to ASSET_LIST would put a synthetic
+ * series into every real-market total on the page — exactly what spec
+ * section 72 forbids, and invisible once it happened.
+ *
+ * V75 is here because it is the only broker-generated series this platform
+ * can price honestly. A broker's OTC instrument runs at weekends, ignores
+ * news and is priced by the broker — and Deriv publishes the tick stream it
+ * settles its own contracts against, so analysis and outcome read the same
+ * series. Quotex's OTC pairs are the same kind of object with no permitted
+ * way to read their prices; see claude/quotex-otc-audit.md.
+ *
+ * MIRRORS OTC_SYMBOLS in apps/api/app/otc/config.py.
  */
-export const OTC_ASSET_LIST: OtcAssetSymbol[] = [];
+export const OTC_ASSET_LIST: OtcAssetSymbol[] = ["DERIV_V75"];
 
 /**
  * Every broker-generated symbol this codebase knows about, enabled or not.
