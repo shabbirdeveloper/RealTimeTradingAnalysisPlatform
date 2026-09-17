@@ -85,25 +85,30 @@ MARKET_SYMBOLS: dict[str, bool] = {
     "XAUUSD": True,
     "EURUSD": False,
     "GBPUSD": False,
-    # ON, for one specific question that only a measurement can answer.
+    # OFF, and the comparison they were turned on for does not need them.
     #
-    # Quotex quotes its own Gold (OTC) 83 dollars away from the real market
-    # -- measured three times -- so a signal computed here cannot be placed
-    # there. Crypto is the one case where that might not hold: BTC and ETH
-    # trade continuously on real exchanges, weekends included, so a broker
-    # has a genuine 24/7 reference to quote against and less reason to
-    # generate its own series.
+    # The question is real: Quotex quotes its own Gold (OTC) 83 dollars from
+    # the real market -- measured three times -- so a signal computed here
+    # cannot be placed there. Crypto might escape that, because BTC and ETH
+    # trade continuously on real exchanges and a broker has a genuine 24/7
+    # reference to quote against.
     #
-    # Might. Nobody has checked. With these on, the platform shows its own
-    # BTC price beside Quotex's and the comparison takes ten seconds: close
-    # together means the weekend problem has a legitimate answer, far apart
-    # means it is gold all over again and these go back to False.
+    # But answering it here costs 192 requests a day and buys nothing the
+    # comparison needs. Quotex's BTC against a real exchange's BTC is a
+    # browser tab and ten seconds, and it is MORE accurate than our polled
+    # price, which at a 900-second cadence can be a quarter-hour stale --
+    # drift big enough to muddy the very verdict being asked for.
     #
-    # Quota: crypto polls on the 900-second continuous cadence, so 96
-    # requests a day each. With XAU/USD's 540 that is 732 against a tier of
-    # 800 -- affordable, and the reason this is two instruments and not five.
-    "BTCUSD": True,
-    "ETHUSD": True,
+    # test_the_enabled_set_fits_the_free_tier_with_room caught this: 732/day
+    # against a tier of 800 leaves 68 requests of slack, and one retry storm
+    # or backfill then freezes every instrument at the same minute. This
+    # project has already lived that failure once.
+    #
+    # Turn these on AFTER the comparison passes, and widen the cadence in the
+    # same change -- test_re_enabling_the_old_five_would_exceed_the_tier
+    # exists to make that a deliberate act rather than a flag flip.
+    "BTCUSD": False,
+    "ETHUSD": False,
 }
 
 

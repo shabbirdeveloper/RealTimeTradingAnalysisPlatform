@@ -235,14 +235,30 @@ class FingerprintTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
-    def test_exactly_one_instrument_is_enabled_across_both_engines(self):
-        """Phase 1 is a hard constraint, not a preference: ONE price series
-        under test at a time, whichever engine it belongs to. Counting only
-        one engine's list would let a second instrument run unnoticed."""
+    def test_one_instrument_per_engine_and_no_more(self):
+        """ONE price series under test per engine -- not one in total.
+
+        This used to demand exactly ["XAUUSD"] across both lists, which was
+        right while only the real-market engine existed. It is wrong now:
+        the broker-OTC engine reads a different feed, answers a different
+        question (what can be traded at a weekend), costs no Twelve Data
+        quota, and section 72 forbids its results ever being pooled with a
+        real market's. Summing the two lists to compare against one name
+        was treating them as interchangeable, which is the exact confusion
+        the provenance rules exist to prevent.
+
+        What has NOT been relaxed is the count. One real-market instrument
+        and one broker instrument. A third of either kind means two series
+        under test in the same engine and neither getting measured, which
+        is how this project spent weeks with five assets and no accuracy
+        figure for any of them.
+        """
         from app.otc.config import enabled_market_symbols, enabled_symbols
 
-        running = enabled_symbols() + enabled_market_symbols()
-        self.assertEqual(running, ["XAUUSD"], f"expected one instrument, got {running}")
+        market = enabled_market_symbols()
+        broker = enabled_symbols()
+        self.assertEqual(market, ["XAUUSD"], f"expected one market pair, got {market}")
+        self.assertEqual(broker, ["DERIV_V75"], f"expected one broker series, got {broker}")
 
     def test_expiry_is_five_minutes(self):
         self.assertEqual(CONFIG.expiry_seconds, 300)

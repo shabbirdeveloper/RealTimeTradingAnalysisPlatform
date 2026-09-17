@@ -78,24 +78,23 @@ export const ASSET_CONFIGS: Record<AssetSymbol, AssetConfig> = {
  * dashboard grid, the analyzer, the history filters and every "is this a
  * symbol we know" check.
  *
- * Three, and each one is here for a reason that can be stated. XAU/USD is
- * the instrument being measured. BTC and ETH are here to answer one
- * question: a broker quotes its own weekend "OTC" gold 83 dollars from the
- * real market, but crypto trades continuously on real exchanges, so a
- * broker has a genuine 24/7 reference to quote against. Whether it does is
- * unchecked -- these cards exist so the price can be compared against a
- * broker's own screen in ten seconds.
+ * One real-market instrument, deliberately. Cards of which none are being
+ * analysed are not instruments, they are furniture, and a visitor cannot
+ * tell the difference.
  *
- * What is NOT here: an instrument nobody is analysing. A card that goes
- * permanently stale is not a fourth instrument, it is furniture, and a
- * visitor cannot tell the difference.
+ * BTC and ETH were briefly added to compare a broker's crypto quote against
+ * the real market -- the weekend question that Quotex's 83-dollar gold gap
+ * raised. They came straight back out: that comparison is a browser tab,
+ * and running them here cost 192 provider requests a day for a number the
+ * comparison does not need. See the note on MARKET_SYMBOLS in
+ * apps/api/app/otc/config.py.
  *
  * MIRRORS apps/api/app/otc/config.py MARKET_SYMBOLS. The two must be
  * changed together: this list decides what the site renders, that one
  * decides what the engine analyses, and nothing checks them against each
  * other. A symbol here but not there is a permanently stale card.
  */
-export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD", "BTCUSD", "ETHUSD"];
+export const ASSET_LIST: MarketAssetSymbol[] = ["XAUUSD"];
 
 /**
  * Broker-generated instruments the platform currently RUNS, rendered in
