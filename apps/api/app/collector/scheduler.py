@@ -427,11 +427,21 @@ def start_scheduler() -> AsyncIOScheduler:
     # as a statement about the world and is not one.
     if settings.public_market_collector_enabled:
         if settings.adaptive_polling:
-            symbols = [a.value for a in Asset]
+            # No request estimate here. This line used to print one computed
+            # from EVERY member of the Asset enum -- all five -- and label it
+            # "at this configuration". The configuration polls one pair. So
+            # the log carried two estimates, ~540 and ~1812, seventy lines
+            # apart, and the wrong one was the one that sounded definitive.
+            #
+            # 1812 against a 800/day tier reads as a quota already blown,
+            # which is the kind of number that gets a healthy collector
+            # switched off. The comment directly above is about exactly this
+            # error class, and this line was committing it.
+            #
+            # The accurate figure, over enabled_market_symbols(), is printed
+            # when the job is added. One estimate, or none.
             logger.info(
-                "market data scheduler started (tick=%ss, per-asset cadence; "
-                "~%.0f provider requests/day at this configuration)",
-                tick, daily_request_estimate(symbols),
+                "market data scheduler started (tick=%ss, per-asset cadence)", tick,
             )
         else:
             logger.info("market data scheduler started (fixed interval=%ss)", tick)

@@ -195,3 +195,39 @@ class SinglePairTests(unittest.TestCase):
         asian = datetime(2026, 9, 11, 3, 0, tzinfo=timezone.utc)
         self.assertEqual(interval_seconds("XAUUSD", london), 120)
         self.assertEqual(interval_seconds("XAUUSD", asian), 300)
+
+
+class QuotaReportingTests(unittest.TestCase):
+    """The collector may report ONE request estimate, and it must be the
+    estimate for what is actually enabled.
+
+    It once printed two, seventy log lines apart -- ~540 over the enabled
+    set and ~1812 over every member of the Asset enum, the second labelled
+    "at this configuration". Nothing polls that configuration. 1812 against
+    a 800/day tier reads as a quota already blown, and a number that
+    definite gets a healthy collector switched off by whoever reads it.
+    """
+
+    def test_the_estimate_is_computed_over_enabled_symbols_only(self):
+        from app.collector.cadence import daily_request_estimate
+        from app.otc.config import enabled_market_symbols
+
+        every_asset = ["XAUUSD", "EURUSD", "GBPUSD", "BTCUSD", "ETHUSD"]
+        enabled = daily_request_estimate(enabled_market_symbols())
+        everything = daily_request_estimate(every_asset)
+
+        # If these are ever equal the distinction has been lost and a
+        # regression could reintroduce the whole-enum figure unnoticed.
+        self.assertLess(enabled, everything)
+
+    def test_the_scheduler_does_not_estimate_over_the_whole_enum(self):
+        import inspect
+
+        from app.collector import scheduler
+
+        source = inspect.getsource(scheduler.start_scheduler)
+        self.assertNotIn(
+            "[a.value for a in Asset]", source,
+            "start_scheduler is estimating requests over every Asset rather "
+            "than the enabled set -- see QuotaReportingTests",
+        )
