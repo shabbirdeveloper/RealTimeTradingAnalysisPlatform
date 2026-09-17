@@ -85,8 +85,25 @@ MARKET_SYMBOLS: dict[str, bool] = {
     "XAUUSD": True,
     "EURUSD": False,
     "GBPUSD": False,
-    "BTCUSD": False,
-    "ETHUSD": False,
+    # ON, for one specific question that only a measurement can answer.
+    #
+    # Quotex quotes its own Gold (OTC) 83 dollars away from the real market
+    # -- measured three times -- so a signal computed here cannot be placed
+    # there. Crypto is the one case where that might not hold: BTC and ETH
+    # trade continuously on real exchanges, weekends included, so a broker
+    # has a genuine 24/7 reference to quote against and less reason to
+    # generate its own series.
+    #
+    # Might. Nobody has checked. With these on, the platform shows its own
+    # BTC price beside Quotex's and the comparison takes ten seconds: close
+    # together means the weekend problem has a legitimate answer, far apart
+    # means it is gold all over again and these go back to False.
+    #
+    # Quota: crypto polls on the 900-second continuous cadence, so 96
+    # requests a day each. With XAU/USD's 540 that is 732 against a tier of
+    # 800 -- affordable, and the reason this is two instruments and not five.
+    "BTCUSD": True,
+    "ETHUSD": True,
 }
 
 
@@ -157,6 +174,45 @@ class OTCEngineConfig:
 
 
 CONFIG = OTCEngineConfig()
+
+
+# ---------------------------------------------------------------------------
+# Per-instrument thresholds
+# ---------------------------------------------------------------------------
+#
+# One global floor cannot serve two series whose scores live on different
+# scales, and 895 logged decisions say ours do:
+#
+#     XAUUSD      296 decisions   best score ever 95   clears 78 in 3.7%
+#     DERIV_V75   599 decisions   best score ever 77   clears 78 in 0.0%
+#
+# V75 has never once reached 78 and, on that evidence, never will. The
+# engine was not silent on it -- it was walled off by a number, and the
+# number was never about V75 at all: 78 was chosen while only real-market
+# gold existed.
+#
+# So the floor becomes per-symbol. What it does NOT become is lower.
+# Nothing here is filled in from the distribution above, because how OFTEN
+# a floor is cleared says nothing about whether those setups WIN, and
+# lowering a bar until the system starts speaking is the exact failure
+# this platform exists to avoid. An entry is added only when
+# `otc_backtest.py --symbol <X> --sweep` shows a floor whose win rate has
+# a LOWER interval bound above break-even on a usable number of signals.
+#
+# Until then every symbol keeps the default, and unreachable_floor_warning()
+# below makes the wall visible in the log instead of leaving it to be
+# rediscovered by reading the engine's silence.
+SYMBOL_THRESHOLDS: dict[str, tuple[int, int]] = {
+    # "DERIV_V75": (score, separation),   <- set from the sweep, not by hand
+}
+
+
+def thresholds_for(symbol: str) -> tuple[int, int]:
+    """(minimum score, minimum CALL/PUT separation) for one instrument."""
+    return SYMBOL_THRESHOLDS.get(
+        symbol, (CONFIG.minimum_score, CONFIG.minimum_directional_difference)
+    )
+
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,8 @@ import hashlib
 import logging
 from datetime import datetime
 
-from app.otc.config import CONFIG, OTC_SYMBOLS, EngineProfile, profile_for
+from app.otc import reachability
+from app.otc.config import CONFIG, OTC_SYMBOLS, EngineProfile, profile_for, thresholds_for
 from app.otc.features import build_context
 from app.otc.filters import (
     entry_timing_failures,
@@ -103,7 +104,14 @@ def evaluate(
     verdict = max(verdicts, key=lambda v: max(v.call_total, v.put_total))
 
     # --- 5. scoring gates (contradiction + threshold)
-    failures = scoring_failures(verdict)
+    #
+    # The best side score goes on record before the gate judges it. An
+    # instrument whose best score NEVER reaches its floor is walled off,
+    # not selective, and those two look identical one line at a time.
+    reachability.record(symbol, max(verdict.call_total, verdict.put_total),
+                        thresholds_for(symbol)[0])
+
+    failures = scoring_failures(verdict, symbol)
     if failures:
         return reject(failures, context=context, verdict=verdict, regime=regime, regime_reason=regime_reason)
 

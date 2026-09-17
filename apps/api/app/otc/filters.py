@@ -10,7 +10,7 @@ it not signal?" is the question this project asks most.
 
 from __future__ import annotations
 
-from app.otc.config import CONFIG, EngineProfile, OTC_PROFILE
+from app.otc.config import CONFIG, thresholds_for, EngineProfile, OTC_PROFILE
 from app.otc.features import MarketContext
 from app.otc.regime import NO_TRADE_REGIMES
 from app.otc.strategies.base import StrategyVerdict
@@ -43,7 +43,7 @@ def regime_failures(context: MarketContext) -> list[str]:
     return []
 
 
-def scoring_failures(verdict: StrategyVerdict) -> list[str]:
+def scoring_failures(verdict: StrategyVerdict, symbol: str | None = None) -> list[str]:
     """Phase 23's two gates, kept separate because they reject different
     markets and the distinction matters when reading rejected setups.
 
@@ -53,18 +53,27 @@ def scoring_failures(verdict: StrategyVerdict) -> list[str]:
     into one 'quality' number is what made the old engine's threshold
     sweep move the win rate by 0.2 points across 1,575 trades.
     """
+    # Per-instrument, because a single floor cannot serve two series whose
+    # scores live on different scales -- see SYMBOL_THRESHOLDS. `symbol` is
+    # optional only so existing tests keep calling this with one argument;
+    # both collectors pass it.
+    min_score, min_separation = (
+        thresholds_for(symbol) if symbol
+        else (CONFIG.minimum_score, CONFIG.minimum_directional_difference)
+    )
+
     problems: list[str] = []
     leader = verdict.leader
     best = max(verdict.call_total, verdict.put_total)
 
     if leader is None:
         return ["CALL and PUT scored identically"]
-    if best < CONFIG.minimum_score:
-        problems.append(f"score {best} below the {CONFIG.minimum_score} floor")
-    if verdict.difference < CONFIG.minimum_directional_difference:
+    if best < min_score:
+        problems.append(f"score {best} below the {min_score} floor")
+    if verdict.difference < min_separation:
         problems.append(
             f"CALL {verdict.call_total} vs PUT {verdict.put_total} -- "
-            f"separation {verdict.difference} below the {CONFIG.minimum_directional_difference} floor"
+            f"separation {verdict.difference} below the {min_separation} floor"
         )
     return problems
 
