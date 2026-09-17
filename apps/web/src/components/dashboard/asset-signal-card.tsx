@@ -8,7 +8,7 @@ import { PriceTicker } from "@/components/shared/price-ticker";
 import { ASSET_CONFIGS } from "@/data/assets";
 import { SCORE_FLOOR } from "@/data/thresholds";
 import type { DataStatus, Signal } from "@/types";
-import { cn, expirySecondsOf, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
+import { cn, expirySecondsOf, formatCountdown, formatExpiry, formatPercent, formatPrice } from "@/lib/utils";
 import { ArrowUpRight, ArrowDownRight, Minus, PauseCircle } from "lucide-react";
 import { MarketRead } from "@/components/dashboard/market-read";
 import { MarketClosedNotice } from "@/components/dashboard/market-closed-notice";
@@ -42,7 +42,9 @@ export function AssetSignalCard({
   // Null until hydration, so the server renders the ordinary card and the
   // closed state appears client-side. Getting this backwards would mean SSR
   // asserting "closed" from the server's clock, which is not the viewer's.
-  const now = useNow(30_000);
+  // One second, not thirty: this drives a visible countdown now. Thirty
+  // would make it jump in half-minute steps, which reads as broken.
+  const now = useNow(1_000);
   const closed = now !== null && !isMarketOpen(signal.asset, now);
   const isNoTrade = signal.direction === "NO_TRADE";
   const isAplusplus = signal.grade === "A++";
@@ -52,6 +54,20 @@ export function AssetSignalCard({
   // direction badge; a reader takes the loudest element on the card, and the
   // loudest element was the trade.
   const actionable = !dataStatus || dataStatus === "LIVE" || dataStatus === "DELAYED";
+
+  // How long this signal stays valid. Measured against validUntil, which the
+  // engine set when it decided -- never recomputed from the current clock,
+  // or a stale signal would appear to restart its own life on every render.
+  const msLeft = signal.validUntil && now
+    ? new Date(signal.validUntil).getTime() - now.getTime()
+    : null;
+  const expired = msLeft !== null && msLeft <= 0;
+  // expirySecondsOf returns null when neither expiry field is set; the bar
+  // then simply has no length to measure against, so it stays empty.
+  const totalMs = (expirySecondsOf(signal) ?? 0) * 1000;
+  const elapsedPct = msLeft !== null && totalMs > 0
+    ? Math.max(0, Math.min(100, ((totalMs - msLeft) / totalMs) * 100))
+    : 0;
 
   const accent =
     signal.direction === "CALL" ? "bg-call" : signal.direction === "PUT" ? "bg-put" : "bg-notrade/70";
@@ -181,6 +197,53 @@ export function AssetSignalCard({
                     />
                   </div>
                   <span className="font-mono-tabular font-semibold text-put">PUT {signal.putScore}</span>
+                </div>
+              )}
+
+              {/*
+                The countdown, and what happens at zero.
+
+                At zero this does NOT become the next signal. The engine
+                re-reads the market every couple of minutes and most of those
+                cycles end in no trade -- so the honest state after expiry is
+                "waiting", not a fresh CALL. A card that produced a new
+                direction every five minutes on schedule would be inventing
+                one to fill the slot, which is the single thing this platform
+                exists not to do.
+
+                AutoRefresh on the page re-fetches the server data, so when a
+                real decision does arrive this card changes on its own.
+              */}
+              {msLeft !== null && (
+                <div className="space-y-1.5 border-t border-border/60 pt-2.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {expired ? "Expired" : "Expires in"}
+                    </span>
+                    <span
+                      className={cn(
+                        "font-mono-tabular text-sm font-semibold",
+                        expired ? "text-muted-foreground" : msLeft < 60_000 ? "text-put" : "text-foreground"
+                      )}
+                    >
+                      {formatCountdown(msLeft)}
+                    </span>
+                  </div>
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-secondary">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-1000 ease-linear",
+                        expired ? "bg-muted-foreground/40" : msLeft < 60_000 ? "bg-put" : "bg-primary"
+                      )}
+                      style={{ width: `${100 - elapsedPct}%` }}
+                    />
+                  </div>
+                  {expired && (
+                    <p className="text-[10px] leading-relaxed text-muted-foreground">
+                      Waiting for the next decision. The engine re-reads the market every couple of
+                      minutes — most cycles end in no trade, so the next one may not be a signal.
+                    </p>
+                  )}
                 </div>
               )}
 

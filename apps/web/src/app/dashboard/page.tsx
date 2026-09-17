@@ -1,4 +1,5 @@
 import { ASSET_LIST, ASSET_CONFIGS } from "@/data/assets";
+import { AutoRefresh } from "@/components/dashboard/auto-refresh";
 import { AssetSignalCard } from "@/components/dashboard/asset-signal-card";
 import { DataStatusPill } from "@/components/shared/badges";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -129,6 +130,10 @@ export default async function DashboardHomePage() {
           }
         />
       </div>
+
+      {/* Without this the page is a photograph: the engine decides every
+          couple of minutes and nothing here would ever change. */}
+      <AutoRefresh intervalMs={30_000} />
 
       <EngineHeartbeatBanner beats={heartbeats} />
 
