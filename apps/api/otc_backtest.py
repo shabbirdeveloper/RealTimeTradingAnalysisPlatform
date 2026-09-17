@@ -98,17 +98,38 @@ def healthy_at(when: datetime) -> MarketDataHealth:
     )
 
 
-def load(symbol: str, timeframes: tuple[str, ...], days: int) -> dict[str, list[dict]]:
+def load(
+    symbol: str, timeframes: tuple[str, ...], days: int, end_offset_days: int = 0
+) -> dict[str, list[dict]]:
+    """Stored bars for the test window.
+
+    `end_offset_days` stops the series short of the newest bar, which is
+    what makes an out-of-sample test possible at all. Choosing a threshold
+    on a stretch of history and then reporting its win rate on that SAME
+    stretch demonstrates nothing: with 24 combinations swept, one of them
+    looks good by arithmetic alone. The only honest check is to fix the
+    choice and run it on data that had no part in making it.
+    """
     from app.storage.candle_repository import fetch_recent_otc_candles
 
     series: dict[str, list[dict]] = {}
     for timeframe in timeframes:
         seconds = TIMEFRAME_SECONDS[timeframe]
-        # Enough bars to cover the window plus the engine's warm-up.
-        needed = int(days * 86400 / seconds) + CONFIG.min_bars_per_timeframe + 60
+        # Enough bars to cover the window, the warm-up, AND everything that
+        # will be discarded by the offset -- the offset trims from the NEW
+        # end, so those bars still have to be fetched before they can be
+        # dropped.
+        span_days = days + end_offset_days
+        needed = int(span_days * 86400 / seconds) + CONFIG.min_bars_per_timeframe + 60
         rows = fetch_recent_otc_candles(symbol, timeframe, min(needed, 5000))
-        if rows:
-            series[timeframe] = rows
+        if not rows:
+            continue
+        if end_offset_days:
+            cutoff = rows[-1]["open_time"] - timedelta(days=end_offset_days)
+            rows = [r for r in rows if r["open_time"] <= cutoff]
+            if not rows:
+                continue
+        series[timeframe] = rows
     return series
 
 
@@ -138,9 +159,10 @@ def outcome(rows: list[dict], entry_at: datetime, entry: float, direction: str,
     return "WIN" if (higher if direction == "CALL" else not higher) else "LOSS"
 
 
-def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: int) -> dict:
+def run(symbol: str, days: int, threshold: int, separation: int, step_seconds: int,
+        end_offset_days: int = 0) -> dict:
     profile = profile_for(symbol)
-    series = load(symbol, profile.timeframes, days)
+    series = load(symbol, profile.timeframes, days, end_offset_days)
 
     missing = [tf for tf in profile.required if tf not in series]
     if missing:
@@ -334,6 +356,11 @@ def main() -> int:
     parser.add_argument("--symbol", default="XAUUSD",
                         help="the instrument under test (default: the enabled pair)")
     parser.add_argument("--days", type=int, default=3)
+    parser.add_argument(
+        "--end-offset-days", type=int, default=0,
+        help="stop this many days short of the newest bar, for out-of-sample "
+             "testing: pick a threshold with a large offset, verify it with none",
+    )
     parser.add_argument("--threshold", type=int, default=CONFIG.minimum_score)
     parser.add_argument("--separation", type=int, default=CONFIG.minimum_directional_difference)
     parser.add_argument("--step", type=int, default=0, help="seconds between evaluations")
@@ -345,11 +372,22 @@ def main() -> int:
     profile = profile_for(args.symbol)
     step = args.step or profile.evaluation_seconds
 
-    out(f"\n{args.symbol} — 5-minute engine, {args.days}d of stored history, "
+    # The window has to be in the header. Two runs that differ only by
+    # --end-offset-days produce reports that otherwise look identical, and
+    # an in-sample table filed as an out-of-sample one is worse than no
+    # test at all: it would be the confirmation nobody actually performed.
+    window = (
+        f"{args.days}d ending {args.end_offset_days}d before the newest bar "
+        "(OUT OF SAMPLE if the threshold was chosen elsewhere)"
+        if args.end_offset_days
+        else f"{args.days}d of stored history, ending at the newest bar"
+    )
+    out(f"\n{args.symbol} — 5-minute engine, {window}, "
           f"evaluating every {step}s\n")
 
     if not args.sweep:
-        report(run(args.symbol, args.days, args.threshold, args.separation, step))
+        report(run(args.symbol, args.days, args.threshold, args.separation, step,
+                   args.end_offset_days))
         out()
         _save(args)
         return 0
@@ -359,7 +397,8 @@ def main() -> int:
     out("-" * 64)
     for threshold in (50, 55, 60, 65, 70, 75, 78, 82):
         for separation in (10, 18, 25):
-            r = run(args.symbol, args.days, threshold, separation, step)
+            r = run(args.symbol, args.days, threshold, separation, step,
+                    args.end_offset_days)
             if r.get("error"):
                 out(f"{threshold:>6} {separation:>4}   {r['error']}")
                 continue
